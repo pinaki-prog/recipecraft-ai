@@ -124,65 +124,149 @@ function getCuisineProfile(location) {
 //  DISH ALIASES
 //  Expands shorthand dish names into their core ingredients
 //  so the nutrition and step engines can work with real items.
+//
+//  BUG FIXES (v2):
+//  All ingredient strings now use the exact underscore-keyed
+//  format that matches NUTRITION_DB, MICRO_DB, INGREDIENT_COST,
+//  ALLERGEN_TAGS, LEGUME_SET, INGREDIENT_MISTAKES, etc.
+//  Previous spaced/plural/variant strings caused silent zero-
+//  contribution from those ingredients across all downstream
+//  engines (nutrition, health score, micros, allergens, cost,
+//  cooking steps, and mistake warnings).
+//
+//  Full list of fixes applied:
+//  "toor dal"      → "toor_dal"       (dalma, sambar)
+//  "moong dal"     → "moong_dal"      (khichdi, pongal, pesarattu)
+//  "raw banana"    → "raw_banana"     (dalma, avial)
+//  "green peas"    → "green_peas"     (vermicelli_upma)
+//  "peas"          → "green_peas"     (pav_bhaji, veg_biryani, keema_matar,
+//                                      matar_paneer, fried_rice, egg_fried_rice)
+//  "potatoes"      → "potato"         (aloo_paratha, pav_bhaji)
+//  "baby potatoes" → "potato"         (dum_aloo)
+//  "carrots"       → "carrot"         (gajar_halwa)
+//  "eggs"          → "egg"            (pasta_carbonara)
+//  "basmati rice"  → "rice"           (all four biryanis)
+//  "yogurt"        → "curd"           (10 dishes)
+//  "ground beef"   → "beef"           (keema_matar, tacos, spaghetti_bolognese)
+//  "kidney beans"  → "rajma"          (rajma_chawal)
+//  "olive oil"     → "olive_oil"      (hummus, pizza_margherita, shakshuka, greek_salad)
+//  "lentils"       → "masoor_dal"     (haleem)
+//  "urad dal"      → "urad_dal"       (idli, dosa, upma, uttapam, appam, bedmi_puri)
+//  "chana dal"     → "chana_dal"      (dosa)
+//  "black urad dal"→ "urad_dal"       (daal_makhani)
+//  "rice noodles"  → "rice_noodles"   (pad_thai, pho, laksa)
 // ─────────────────────────────────────────────────────────────
 const DISH_ALIASES = {
-  dalma: ["toor dal", "pumpkin", "raw banana", "papaya", "turmeric", "cumin", "ghee"],
-  khichdi: ["rice", "moong dal", "turmeric", "ghee", "ginger"],
-  paneer_butter_masala: ["paneer", "tomato", "cream", "butter", "cashews", "kasuri methi"],
-  chole_bhature: ["chickpeas", "onion", "tomato", "ginger", "garlic", "chole masala", "flour"],
-  poha: ["flattened rice", "peanuts", "onion", "turmeric", "mustard seeds", "curry leaves"],
-  palak_paneer: ["spinach", "paneer", "garlic", "green chili", "cream"],
-  aloo_paratha: ["whole wheat flour", "potatoes", "green chili", "coriander", "ajwain"],
-  rajma_chawal: ["kidney beans", "rice", "onion", "tomato", "ginger", "cumin"],
-  butter_chicken: ["chicken", "tomato", "butter", "cream", "ginger", "garlic", "kashmiri mirch"],
-  pav_bhaji: ["potatoes", "peas", "cauliflower", "butter", "pav bhaji masala", "bread rolls"],
-  sambar: ["toor dal", "drumstick", "tamarind", "sambar powder", "mustard seeds", "curry leaves"],
-  idli: ["rice", "urad dal", "fenugreek seeds", "salt"],
-  dosa: ["rice", "urad dal", "chana dal", "fenugreek seeds"],
-  baingan_bharta: ["eggplant", "onion", "tomato", "garlic", "mustard oil"],
-  fish_curry: ["fish", "mustard seeds", "turmeric", "green chili", "mustard oil"],
-  upma: ["semolina", "mustard seeds", "urad dal", "onion", "curry leaves", "ginger"],
-  dhokla: ["gram flour", "lemon juice", "eno", "mustard seeds", "green chili"],
-  kadai_paneer: ["paneer", "bell peppers", "onion", "coriander seeds", "dried red chili"],
-  gajar_halwa: ["carrots", "milk", "sugar", "ghee", "cardamom", "khoya"],
-  miso_soup: ["miso paste", "tofu", "seaweed", "dashi", "green onion"],
-  pasta_carbonara: ["pasta", "eggs", "guanciale", "pecorino cheese", "black pepper"],
-  guacamole: ["avocado", "lime", "onion", "cilantro", "jalapeño"],
-  chicken_biryani: ["basmati rice", "chicken", "yogurt", "onion", "biryani masala", "ghee", "saffron", "mint"],
-  mutton_biryani: ["basmati rice", "lamb", "yogurt", "onion", "biryani masala", "ghee", "saffron", "ginger"],
-  veg_biryani: ["basmati rice", "carrot", "peas", "beans", "potato", "yogurt", "biryani masala", "mint"],
-  egg_biryani: ["basmati rice", "egg", "onion", "tomato", "biryani masala", "ghee", "curd"],
-  chicken_curry: ["chicken", "onion", "tomato", "ginger", "garlic", "turmeric", "coriander powder"],
-  chicken_65: ["chicken", "curry leaves", "yogurt", "cornflour", "red chili", "garlic", "ginger"],
-  mutton_curry: ["lamb", "onion", "tomato", "garlic", "ginger", "mustard oil", "garam masala"],
-  chicken_stew: ["chicken", "coconut milk", "potato", "carrot", "black pepper", "ginger"],
-  keema_matar: ["ground beef", "peas", "onion", "tomato", "ginger", "garlic", "cumin"],
-  malai_kofta: ["paneer", "potato", "cornflour", "cream", "cashews", "tomato", "cardamom"],
-  bhindi_masala: ["okra", "onion", "tomato", "cumin", "coriander powder", "amchur"],
-  dum_aloo: ["baby potatoes", "yogurt", "fennel seeds", "ginger powder", "mustard oil", "kashmiri mirch"],
-  vada_pav: ["potato", "gram flour", "garlic", "green chili", "bread rolls", "mustard seeds"],
-  pongal: ["rice", "moong dal", "black pepper", "cumin", "ghee", "cashews", "ginger"],
-  rasam: ["tamarind", "tomato", "black pepper", "cumin", "garlic", "coriander leaves"],
-  shahi_paneer: ["paneer", "cream", "yogurt", "cashews", "saffron", "cardamom"],
-  kheer: ["rice", "milk", "sugar", "cardamom", "almonds", "raisins"],
-  aloo_gobi: ["potato", "cauliflower", "onion", "tomato", "ginger", "turmeric", "cumin"],
-  matar_paneer: ["paneer", "peas", "tomato", "onion", "ginger", "garlic", "cream"],
-  daal_makhani: ["black urad dal", "rajma", "butter", "cream", "tomato", "ginger", "garlic"],
-  thai_green_curry: ["coconut milk", "green curry paste", "bamboo shoots", "chicken", "basil", "lime"],
-  hummus: ["chickpeas", "tahini", "olive oil", "lemon", "garlic"],
-  falafel: ["chickpeas", "parsley", "cilantro", "garlic", "cumin", "coriander"],
-  pizza_margherita: ["pizza dough", "tomato sauce", "mozzarella", "basil", "olive oil"],
-  tacos: ["corn tortillas", "ground beef", "lettuce", "cheese", "salsa", "lime"],
-  fried_rice: ["rice", "soy sauce", "carrot", "peas", "egg", "spring onion", "garlic"],
-  hakka_noodles: ["noodles", "cabbage", "carrot", "capsicum", "soy sauce", "vinegar"],
-  ramen: ["ramen noodles", "broth", "soy sauce", "egg", "green onion", "seaweed"],
-  spaghetti_bolognese: ["pasta", "ground beef", "tomato sauce", "onion", "garlic", "oregano"],
-  oatmeal: ["oats", "milk", "honey", "banana", "almonds"],
-  egg_fried_rice: ["rice", "egg", "spring onion", "soy sauce", "garlic", "peas"],
+  // ── Odia ────────────────────────────────────────────────────
+  dalma:               ["toor_dal", "pumpkin", "raw_banana", "papaya", "turmeric", "cumin", "ghee"],
+
+  // ── North Indian ────────────────────────────────────────────
+  khichdi:             ["rice", "moong_dal", "turmeric", "ghee", "ginger"],
+  paneer_butter_masala:["paneer", "tomato", "cream", "butter", "cashews", "kasuri methi"],
+  chole_bhature:       ["chickpeas", "onion", "tomato", "ginger", "garlic", "chole masala", "flour"],
+  aloo_paratha:        ["whole wheat flour", "potato", "green chili", "coriander", "ajwain"],
+  rajma_chawal:        ["rajma", "rice", "onion", "tomato", "ginger", "cumin"],
+  butter_chicken:      ["chicken", "tomato", "butter", "cream", "ginger", "garlic", "kashmiri mirch"],
+  pav_bhaji:           ["potato", "green_peas", "cauliflower", "butter", "pav bhaji masala", "bread rolls"],
+  palak_paneer:        ["spinach", "paneer", "garlic", "green chili", "cream"],
+  kadai_paneer:        ["paneer", "capsicum", "onion", "coriander seeds", "dried red chili"],
+  malai_kofta:         ["paneer", "potato", "cornflour", "cream", "cashews", "tomato", "cardamom"],
+  bhindi_masala:       ["okra", "onion", "tomato", "cumin", "coriander powder", "amchur"],
+  dum_aloo:            ["potato", "curd", "fennel seeds", "ginger", "mustard oil", "kashmiri mirch"],
+  vada_pav:            ["potato", "gram flour", "garlic", "green chili", "bread rolls", "mustard seeds"],
+  rasam:               ["tamarind", "tomato", "black pepper", "cumin", "garlic", "coriander leaves"],
+  shahi_paneer:        ["paneer", "cream", "curd", "cashews", "saffron", "cardamom"],
+  kheer:               ["rice", "milk", "sugar", "cardamom", "almonds", "raisins"],
+  aloo_gobi:           ["potato", "cauliflower", "onion", "tomato", "ginger", "turmeric", "cumin"],
+  matar_paneer:        ["paneer", "green_peas", "tomato", "onion", "ginger", "garlic", "cream"],
+  daal_makhani:        ["urad_dal", "rajma", "butter", "cream", "tomato", "ginger", "garlic"],
+  gajar_halwa:         ["carrot", "milk", "sugar", "ghee", "cardamom", "khoya"],
+  rogan_josh:          ["lamb", "curd", "kashmiri mirch", "ginger", "garlic", "fennel", "cardamom"],
+  laal_maas:           ["lamb", "mathania chili", "garlic", "ghee", "coriander", "curd"],
+  nihari:              ["lamb", "bone marrow", "atta", "ginger", "nihari masala", "ghee"],
+  haleem:              ["lamb", "wheat", "masoor_dal", "ginger", "garlic", "onion", "ghee"],
+  shahi_tukda:         ["bread", "milk", "sugar", "saffron", "cardamom", "ghee", "almonds"],
+  keema_matar:         ["beef", "green_peas", "onion", "tomato", "ginger", "garlic", "cumin"],
+  mutton_curry:        ["lamb", "onion", "tomato", "garlic", "ginger", "mustard oil", "garam masala"],
+
+  // ── South Indian ────────────────────────────────────────────
+  sambar:              ["toor_dal", "drumstick", "tamarind", "sambar powder", "mustard seeds", "curry leaves"],
+  idli:                ["rice", "urad_dal", "fenugreek seeds", "salt"],
+  dosa:                ["rice", "urad_dal", "chana_dal", "fenugreek seeds"],
+  upma:                ["semolina", "mustard seeds", "urad_dal", "onion", "curry leaves", "ginger"],
+  pongal:              ["rice", "moong_dal", "black pepper", "cumin", "ghee", "cashews", "ginger"],
+  pesarattu:           ["moong_dal", "ginger", "green chili", "cumin", "onion"],
+  uttapam:             ["rice", "urad_dal", "onion", "tomato", "green chili", "coriander"],
+  appam:               ["rice", "coconut milk", "urad_dal", "fenugreek seeds"],
+  avial:               ["raw_banana", "carrot", "pumpkin", "coconut", "curd", "turmeric", "curry leaves"],
+  thoran:              ["cabbage", "coconut", "turmeric", "mustard seeds", "curry leaves"],
+  puttu:               ["rice flour", "coconut", "salt"],
+  kootu:               ["chickpeas", "pumpkin", "coconut", "cumin", "turmeric"],
+  chettinad_chicken:   ["chicken", "black pepper", "kalpasi", "marathi mokku", "garlic", "ginger", "coconut"],
+  fish_molee:          ["fish", "coconut milk", "turmeric", "green chili", "ginger", "onion"],
+  kerala_prawn:        ["shrimp", "coconut milk", "raw mango", "mustard seeds", "curry leaves"],
+  fish_curry:          ["fish", "mustard seeds", "turmeric", "green chili", "mustard oil"],
+  baingan_bharta:      ["eggplant", "onion", "tomato", "garlic", "mustard oil"],
+  dhokla:              ["gram flour", "lemon juice", "eno", "mustard seeds", "green chili"],
+
+  // ── Street food ─────────────────────────────────────────────
+  poha:                ["flattened rice", "peanuts", "onion", "turmeric", "mustard seeds", "curry leaves"],
+  bhel_puri:           ["puffed rice", "potato", "onion", "tomato", "tamarind chutney", "green chutney", "sev"],
+  pani_puri:           ["semolina", "potato", "chickpeas", "tamarind water", "mint", "cumin"],
+  sev_puri:            ["semolina", "potato", "onion", "tomato", "sev", "chutneys"],
+  dahi_puri:           ["semolina", "potato", "curd", "tamarind chutney", "sev", "chaat masala"],
+  aloo_tikki:          ["potato", "green chili", "coriander", "bread crumbs", "chaat masala"],
+  kathi_roll:          ["whole wheat flour", "chicken", "onion", "capsicum", "egg", "green chutney"],
+  frankie:             ["whole wheat flour", "potato", "onion", "chaat masala", "green chili"],
+  bedmi_puri:          ["whole wheat flour", "urad_dal", "fennel", "ginger", "ghee"],
+  poori_bhaji:         ["whole wheat flour", "potato", "onion", "tomato", "turmeric", "mustard seeds"],
+  besan_chilla:        ["gram flour", "onion", "tomato", "green chili", "coriander", "turmeric"],
+  vermicelli_upma:     ["vermicelli", "mustard seeds", "onion", "carrot", "green_peas", "curry leaves"],
+  sabudana_khichdi:    ["sago", "potato", "peanuts", "cumin", "green chili", "ghee"],
+  bread_upma:          ["bread", "onion", "tomato", "green chili", "mustard seeds", "curry leaves"],
+
+  // ── Biryani & rice dishes ────────────────────────────────────
+  chicken_biryani:     ["rice", "chicken", "curd", "onion", "biryani masala", "ghee", "saffron", "mint"],
+  mutton_biryani:      ["rice", "lamb", "curd", "onion", "biryani masala", "ghee", "saffron", "ginger"],
+  veg_biryani:         ["rice", "carrot", "green_peas", "beans", "potato", "curd", "biryani masala", "mint"],
+  egg_biryani:         ["rice", "egg", "onion", "tomato", "biryani masala", "ghee", "curd"],
+  fried_rice:          ["rice", "soy sauce", "carrot", "green_peas", "egg", "spring onion", "garlic"],
+  egg_fried_rice:      ["rice", "egg", "spring onion", "soy sauce", "garlic", "green_peas"],
+  congee:              ["rice", "ginger", "spring onion", "soy sauce", "sesame oil"],
+
+  // ── Chicken dishes ───────────────────────────────────────────
+  chicken_curry:       ["chicken", "onion", "tomato", "ginger", "garlic", "turmeric", "coriander powder"],
+  chicken_65:          ["chicken", "curry leaves", "curd", "cornflour", "red chili", "garlic", "ginger"],
+  chicken_stew:        ["chicken", "coconut milk", "potato", "carrot", "black pepper", "ginger"],
+
+  // ── Global ───────────────────────────────────────────────────
+  miso_soup:           ["miso paste", "tofu", "seaweed", "dashi", "green onion"],
+  pasta_carbonara:     ["pasta", "egg", "guanciale", "pecorino cheese", "black pepper"],
+  guacamole:           ["avocado", "lime", "onion", "cilantro", "jalapeño"],
+  thai_green_curry:    ["coconut milk", "green curry paste", "bamboo shoots", "chicken", "basil", "lime"],
+  hummus:              ["chickpeas", "tahini", "olive_oil", "lemon", "garlic"],
+  falafel:             ["chickpeas", "parsley", "cilantro", "garlic", "cumin", "coriander"],
+  pizza_margherita:    ["pizza dough", "tomato sauce", "mozzarella", "basil", "olive_oil"],
+  tacos:               ["corn tortillas", "beef", "lettuce", "cheese", "salsa", "lime"],
+  hakka_noodles:       ["noodles", "cabbage", "carrot", "capsicum", "soy sauce", "vinegar"],
+  ramen:               ["ramen noodles", "broth", "soy sauce", "egg", "green onion", "seaweed"],
+  spaghetti_bolognese: ["pasta", "beef", "tomato sauce", "onion", "garlic", "oregano"],
+  oatmeal:             ["oats", "milk", "honey", "banana", "almonds"],
+  shakshuka:           ["egg", "tomato", "capsicum", "onion", "cumin", "paprika", "olive_oil"],
+  bibimbap:            ["rice", "egg", "spinach", "carrot", "mushroom", "soy sauce", "sesame oil"],
+  pad_thai:            ["rice_noodles", "shrimp", "egg", "bean sprouts", "peanuts", "lime", "fish sauce"],
+  pho:                 ["rice_noodles", "beef", "star anise", "ginger", "onion", "bean sprouts", "lime"],
+  shawarma:            ["chicken", "curd", "garlic", "lemon", "cumin", "coriander", "flatbread"],
+  fajitas:             ["chicken", "capsicum", "onion", "lime", "cumin", "smoked paprika", "corn tortillas"],
+  greek_salad:         ["tomato", "cucumber", "onion", "olive_oil", "lemon", "oregano"],
+  laksa:               ["rice_noodles", "coconut milk", "shrimp", "tofu", "lemongrass", "turmeric"],
+  okonomiyaki:         ["cabbage", "egg", "flour", "spring onion", "bonito flakes", "mayo"],
 }
 
 // ─────────────────────────────────────────────────────────────
 //  NUTRITION DATABASE   (per 100g)
+//  Added: urad_dal, chana_dal, rice_noodles
+//  Removed: duplicate oats entry
 // ─────────────────────────────────────────────────────────────
 const NUTRITION_DB = {
   chicken:       { cal: 165, p: 31,   c: 0,   f: 3.6 },
@@ -196,12 +280,17 @@ const NUTRITION_DB = {
   rice:          { cal: 130, p: 2.5,  c: 28,  f: 0.3 },
   brown_rice:    { cal: 111, p: 2.6,  c: 23,  f: 0.9 },
   pasta:         { cal: 160, p: 5,    c: 30,  f: 1   },
+  rice_noodles:  { cal: 109, p: 2,    c: 25,  f: 0.2 },  // ← NEW
   potato:        { cal: 87,  p: 2,    c: 20,  f: 0.1 },
   sweet_potato:  { cal: 86,  p: 1.6,  c: 20,  f: 0.1 },
   moong_dal:     { cal: 347, p: 24,   c: 63,  f: 1.2 },
   toor_dal:      { cal: 343, p: 22,   c: 62,  f: 1.7 },
+  urad_dal:      { cal: 341, p: 25,   c: 59,  f: 1.6 },  // ← NEW
+  chana_dal:     { cal: 360, p: 20,   c: 65,  f: 5   },  // ← NEW
   chickpeas:     { cal: 364, p: 19,   c: 61,  f: 6   },
   rajma:         { cal: 333, p: 24,   c: 60,  f: 1   },
+  masoor_dal:    { cal: 352, p: 25,   c: 63,  f: 1   },
+  soy_chunks:    { cal: 345, p: 52,   c: 33,  f: 0.5 },
   spinach:       { cal: 23,  p: 3,    c: 4,   f: 0.4 },
   carrot:        { cal: 41,  p: 1,    c: 10,  f: 0.2 },
   onion:         { cal: 40,  p: 1,    c: 9,   f: 0.1 },
@@ -217,8 +306,6 @@ const NUTRITION_DB = {
   curd:          { cal: 98,  p: 11,   c: 3,   f: 4   },
   oats:          { cal: 389, p: 17,   c: 66,  f: 7   },
   quinoa:        { cal: 368, p: 14,   c: 64,  f: 6   },
-  soy_chunks:    { cal: 345, p: 52,   c: 33,  f: 0.5 },
-  masoor_dal:    { cal: 352, p: 25,   c: 63,  f: 1   },
   almonds:       { cal: 579, p: 21,   c: 22,  f: 50  },
   walnuts:       { cal: 654, p: 15,   c: 14,  f: 65  },
   peanut_butter: { cal: 588, p: 25,   c: 20,  f: 50  },
@@ -230,7 +317,6 @@ const NUTRITION_DB = {
   green_peas:    { cal: 81,  p: 5,    c: 14,  f: 0.4 },
   avocado:       { cal: 160, p: 2,    c: 9,   f: 15  },
   banana:        { cal: 89,  p: 1.1,  c: 23,  f: 0.3 },
-  oats:          { cal: 389, p: 17,   c: 66,  f: 7   },
   semolina:      { cal: 360, p: 13,   c: 73,  f: 1   },
 }
 
@@ -311,7 +397,6 @@ const CUISINE_SUFFIXES = {
 }
 
 function generateTitle(lower, goal, spice, location) {
-  // Use ingredient count as a cheap deterministic seed
   const seed = lower.length * 7 + (spice === "hot" ? 3 : spice === "mild" ? 1 : 0)
 
   const primaryProtein =
@@ -369,10 +454,6 @@ function generateDescription({ lower, goal, location, totalCal, totalP, totalC, 
 }
 
 // ─────────────────────────────────────────────────────────────
-//  STEP FLOW ENGINE  (v2)
-//  Eight cuisine-specific, goal-aware stages with clear labels.
-// ─────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────
 //  STEP FLOW ENGINE  (v3) — fully ingredient-aware
 //
 //  v2 was template-only: every recipe got the same 8 steps
@@ -388,8 +469,9 @@ function generateDescription({ lower, goal, location, totalCal, totalP, totalC, 
 // ── Ingredient category sets ──────────────────────────────────
 const MEAT_SET    = new Set(["chicken","beef","lamb","fish","shrimp"])
 const VEG_PROT    = new Set(["paneer","tofu","egg","soy_chunks"])
-const LEGUME_SET  = new Set(["toor_dal","moong_dal","masoor_dal","chickpeas","rajma"])
-const GRAIN_SET   = new Set(["rice","brown_rice","quinoa","semolina","oats","pasta"])
+// urad_dal and chana_dal added so idli/dosa/upma dals get correct legume cooking steps
+const LEGUME_SET  = new Set(["toor_dal","moong_dal","masoor_dal","urad_dal","chana_dal","chickpeas","rajma"])
+const GRAIN_SET   = new Set(["rice","brown_rice","quinoa","semolina","oats","pasta","rice_noodles"])
 const VEG_SET     = new Set([
   "spinach","carrot","tomato","capsicum","pumpkin","raw_banana","papaya",
   "broccoli","cauliflower","mushroom","green_peas","potato","sweet_potato",
@@ -420,21 +502,23 @@ const PROTEIN_PREP = {
 
 // ── Per-grain prep + cooking text ─────────────────────────────
 const GRAIN_PREP = {
-  rice:       "Wash rice 2–3 times in cold water until it runs clear — this removes excess starch and prevents clumping. Soak for 20 min.",
-  brown_rice: "Wash brown rice and soak for 30 min minimum — it's denser than white rice and needs the extra hydration to cook evenly.",
-  pasta:      "Bring a large pot of water to a rolling boil. Salt it heavily — it should taste like the sea. This is your only chance to season the pasta itself.",
-  semolina:   "Dry-roast semolina in a wide pan over medium heat, stirring constantly, until it turns lightly golden and smells nutty — about 3–4 min.",
-  oats:       "Measure oats and set aside. Warm your liquid (milk or water) in a separate pan — adding oats to cold liquid makes them gluey.",
-  quinoa:     "Rinse quinoa thoroughly under cold water for 1 full minute — it has a natural bitter coating (saponin) that must be washed off.",
+  rice:         "Wash rice 2–3 times in cold water until it runs clear — this removes excess starch and prevents clumping. Soak for 20 min.",
+  brown_rice:   "Wash brown rice and soak for 30 min minimum — it's denser than white rice and needs the extra hydration to cook evenly.",
+  pasta:        "Bring a large pot of water to a rolling boil. Salt it heavily — it should taste like the sea. This is your only chance to season the pasta itself.",
+  rice_noodles: "Soak rice noodles in room-temperature water for 20–30 min until pliable but not soft — they finish cooking in the wok/pan. Do not use boiling water or they turn mushy.",
+  semolina:     "Dry-roast semolina in a wide pan over medium heat, stirring constantly, until it turns lightly golden and smells nutty — about 3–4 min.",
+  oats:         "Measure oats and set aside. Warm your liquid (milk or water) in a separate pan — adding oats to cold liquid makes them gluey.",
+  quinoa:       "Rinse quinoa thoroughly under cold water for 1 full minute — it has a natural bitter coating (saponin) that must be washed off.",
 }
 
 const GRAIN_COOK = {
-  rice:       "Add the soaked and drained rice. Stir once, bring to a boil, then reduce to the lowest possible heat. Lid on, undisturbed — 12 min for white rice. No peeking.",
-  brown_rice: "Add soaked brown rice with 1:2.5 water ratio. Bring to boil, reduce heat to minimum, lid on for 35 min. Rest off heat 10 min before fluffing.",
-  pasta:      "Add pasta to boiling water. Cook until al dente — 1–2 min less than packet instructions. Reserve 1 cup pasta water before draining. Never rinse the pasta.",
-  semolina:   "Pour hot liquid into roasted semolina slowly while stirring constantly to prevent lumps. Cook on low heat, stirring, until it pulls away from the pan.",
-  oats:       "Add oats to warm liquid. Stir continuously on medium-low heat for 4–5 min until thick and creamy. Pull off heat while still slightly loose — it thickens as it cools.",
-  quinoa:     "Add quinoa with 1:2 water ratio. Bring to boil, reduce to simmer, cover for 15 min until all water is absorbed. Fluff with a fork — look for the white tails to appear.",
+  rice:         "Add the soaked and drained rice. Stir once, bring to a boil, then reduce to the lowest possible heat. Lid on, undisturbed — 12 min for white rice. No peeking.",
+  brown_rice:   "Add soaked brown rice with 1:2.5 water ratio. Bring to boil, reduce heat to minimum, lid on for 35 min. Rest off heat 10 min before fluffing.",
+  pasta:        "Add pasta to boiling water. Cook until al dente — 1–2 min less than packet instructions. Reserve 1 cup pasta water before draining. Never rinse the pasta.",
+  rice_noodles: "Add soaked noodles to the hot pan last. Toss rapidly for 2–3 min only — they need no more cooking, just to absorb the sauce. Overcooking makes them gluey.",
+  semolina:     "Pour hot liquid into roasted semolina slowly while stirring constantly to prevent lumps. Cook on low heat, stirring, until it pulls away from the pan.",
+  oats:         "Add oats to warm liquid. Stir continuously on medium-low heat for 4–5 min until thick and creamy. Pull off heat while still slightly loose — it thickens as it cools.",
+  quinoa:       "Add quinoa with 1:2 water ratio. Bring to boil, reduce to simmer, cover for 15 min until all water is absorbed. Fluff with a fork — look for the white tails to appear.",
 }
 
 // ── Per-legume prep + cooking text ────────────────────────────
@@ -442,6 +526,8 @@ const LEGUME_PREP = {
   toor_dal:   "Rinse toor dal until water runs clear. No soaking needed — it pressure cooks well from dry.",
   moong_dal:  "Rinse moong dal. It cooks fast — 2 whistles in a pressure cooker or 20 min on the stovetop.",
   masoor_dal: "Rinse masoor dal. It's the fastest-cooking lentil — no soaking needed, 15 min on stovetop.",
+  urad_dal:   "Rinse urad dal 2–3 times until water runs mostly clear. Soak for 30 min if time allows — it speeds up cooking and improves texture.",
+  chana_dal:  "Rinse chana dal and soak for 30 min minimum. Soaking reduces cooking time and makes it easier to digest.",
   chickpeas:  "If using dried chickpeas: soak in cold water for 8–12 hours — they must double in size. If canned: rinse thoroughly under cold water to reduce sodium by ~40%.",
   rajma:      "Soak rajma in cold water for 8–12 hours minimum. IMPORTANT: rajma contains toxic lectins (phytohaemagglutinin) and must be boiled vigorously for at least 10 min before any simmering.",
 }
@@ -450,6 +536,8 @@ const LEGUME_COOK = {
   toor_dal:   "Pressure cook toor dal for 3–4 whistles until completely soft and mashable. Under-cooked dal causes digestive discomfort — when in doubt, cook longer.",
   moong_dal:  "Pressure cook moong dal for 2 whistles, or simmer covered for 20–25 min. It should be fully soft — no bite remaining.",
   masoor_dal: "Simmer masoor dal for 15–20 min without a lid — it dissolves easily and thickens the base naturally.",
+  urad_dal:   "Pressure cook urad dal for 3–4 whistles, or boil for 25–30 min. It should be completely soft — the outer skin should split slightly.",
+  chana_dal:  "Pressure cook soaked chana dal for 3 whistles until soft but not mushy — individual grains should hold their shape.",
   chickpeas:  "If dried and soaked: pressure cook 4–5 whistles. If canned: they only need 5 min to warm through — don't overcook or they go mushy.",
   rajma:      "After the 10-min vigorous boil, pressure cook for 5–6 whistles until completely tender. The skin should be soft and the inside creamy.",
 }
@@ -491,7 +579,6 @@ function buildPlateStep(proteins, grains, legumes, veggies, goal) {
 function generateSteps({ lower, goal, spice, location }) {
   const profile = getCuisineProfile(location)
 
-  // ── Detect what ingredient categories are present ──
   const proteins  = lower.filter((i) => MEAT_SET.has(i) || VEG_PROT.has(i))
   const meats     = lower.filter((i) => MEAT_SET.has(i))
   const vegProts  = lower.filter((i) => VEG_PROT.has(i))
@@ -508,23 +595,14 @@ function generateSteps({ lower, goal, spice, location }) {
 
   // ── 1. PREP ────────────────────────────────────────────────
   const prepParts = []
-
-  // Grain prep first (rice needs soaking before anything starts)
-  grains.forEach((g) => {
-    if (GRAIN_PREP[g]) prepParts.push(GRAIN_PREP[g])
-  })
-  // Legume prep (soaking warnings for rajma/chickpeas)
-  legumes.forEach((l) => {
-    if (LEGUME_PREP[l]) prepParts.push(LEGUME_PREP[l])
-  })
-  // Protein-specific prep
+  grains.forEach((g) => { if (GRAIN_PREP[g]) prepParts.push(GRAIN_PREP[g]) })
+  legumes.forEach((l) => { if (LEGUME_PREP[l]) prepParts.push(LEGUME_PREP[l]) })
   const prepFn = meats[0]
     ? PROTEIN_PREP[meats[0]]
     : vegProts[0]
     ? PROTEIN_PREP[vegProts[0]]
     : null
   if (prepFn) prepParts.push(prepFn(location))
-  // Veg prep fallback when nothing else
   if (!prepParts.length)
     prepParts.push("Wash, peel and cut all ingredients into uniform pieces. Mise en place — have everything ready before heat goes on.")
 
@@ -537,7 +615,6 @@ function generateSteps({ lower, goal, spice, location }) {
     : `Heat ${profile.fat} over medium-high. Add ${profile.tempering.join(", ")} and cook until fragrant.`
 
   // ── 3. AROMATICS ───────────────────────────────────────────
-  // Skip aromatics for grain-only dishes (oats, plain rice)
   const skipAromatics = !hasProtein && !hasVeg && hasGrain && !hasLegume
   const aromaticsText = skipAromatics
     ? null
@@ -583,15 +660,12 @@ function generateSteps({ lower, goal, spice, location }) {
     : null
 
   // ── 6. SIMMER ──────────────────────────────────────────────
-  // Grain-only dishes skip simmer — they have their own COOK step
-  // Legume-only dishes skip simmer — pressure cooker handles it
   let simmerStep = null
   if (hasMeat || hasVegProt) {
     simmerStep = `SIMMER — Lower heat, cover, and cook until all components are cohesive and the sauce coats the back of a spoon (${hasMeat ? "10–15 min for meat" : "5–8 min for veg protein"}). Taste and adjust seasoning.`
   } else if (hasLegume && hasVeg) {
     simmerStep = `SIMMER — Combine cooked dal/legumes with the vegetable base. Simmer uncovered for 5 min so the flavours marry. Mash lightly for a creamier consistency.`
   } else if (hasGrain && hasVeg) {
-    // e.g. fried rice, pulao
     simmerStep = `COMBINE — Add cooked ${grains.map(capitalize).join("/")} to the vegetable base. Toss well over high heat for 2 min to coat every grain in the flavour base.`
   }
 
@@ -601,7 +675,6 @@ function generateSteps({ lower, goal, spice, location }) {
   // ── 8. PLATE ───────────────────────────────────────────────
   const plateText = `PLATE — ${buildPlateStep(proteins, grains, legumes, veggies, goal)}`
 
-  // ── Assemble — filter nulls ─────────────────────────────────
   return [
     `PREP — ${prepText}`,
     `FAT & BLOOM — ${bloomText}`,
@@ -617,12 +690,12 @@ function generateSteps({ lower, goal, spice, location }) {
 // ─────────────────────────────────────────────────────────────
 //  BUDGET LOGIC ENGINE  (v2)
 //  Per-ingredient cost DB + location cost-of-living factor.
-//  Returns a formatted rupee string (same shape as v1).
 // ─────────────────────────────────────────────────────────────
 const INGREDIENT_COST = {
   chicken: 40, mutton: 90, fish: 60, egg: 12, paneer: 50,
-  tofu: 35, toor_dal: 15, moong_dal: 15, chickpeas: 18, rajma: 20,
-  rice: 8, pasta: 18, oats: 15, quinoa: 45, potato: 6,
+  tofu: 35, toor_dal: 15, moong_dal: 15, urad_dal: 14, chana_dal: 13,
+  chickpeas: 18, rajma: 20, masoor_dal: 14,
+  rice: 8, pasta: 18, rice_noodles: 20, oats: 15, quinoa: 45, potato: 6,
   tomato: 8, onion: 5, capsicum: 12, spinach: 10,
   carrot: 7, mushroom: 30, broccoli: 25, cauliflower: 10,
   ghee: 20, butter: 15, milk: 6, curd: 10,
@@ -636,7 +709,7 @@ const LOCATION_COST_FACTOR = {
 function estimateBudget(lower, location, budget, totalP) {
   const factor      = LOCATION_COST_FACTOR[location] ?? 2.0
   const proteinMult = totalP > 50 ? 1.2 : totalP > 40 ? 1.1 : 1.0
-  const goalMult    = 1.0  // can be parameterised further
+  const goalMult    = 1.0
 
   const raw = lower.reduce((sum, item) => {
     return sum + (INGREDIENT_COST[item] ?? 40)
@@ -648,33 +721,32 @@ function estimateBudget(lower, location, budget, totalP) {
 
 // ─────────────────────────────────────────────────────────────
 //  INGREDIENT SUGGESTION ENGINE  (v2)
-//  Scores suggestions by: base pairing weight (3), side pairing
-//  weight (2), cuisine tempering boost (2), goal-alignment
-//  boost (4). Returns top N as plain strings.
 // ─────────────────────────────────────────────────────────────
 const SUGGESTION_DB = {
-  chicken:  { base: ["garlic","ginger","lemon","black pepper","onion"],    pair: ["spinach","capsicum","mushroom"] },
-  lamb:     { base: ["onion","ginger","garlic","yogurt","bay leaf"],        pair: ["potato","turnip"] },
-  fish:     { base: ["lemon","dill","garlic","capers"],                     pair: ["asparagus","cherry tomato"] },
-  egg:      { base: ["onion","tomato","chili","coriander"],                 pair: ["capsicum","cheese"] },
-  paneer:   { base: ["capsicum","tomato","onion","kasuri methi"],           pair: ["peas","spinach"] },
-  tofu:     { base: ["soy sauce","ginger","garlic","sesame oil"],           pair: ["bok choy","mushroom","edamame"] },
-  toor_dal: { base: ["ghee","cumin","asafoetida","garlic","tomato"],        pair: ["spinach","lemon"] },
-  chickpeas:{ base: ["onion","tomato","cumin","amchur"],                    pair: ["potato","tamarind"] },
-  rajma:    { base: ["onion","tomato","ginger","garam masala"],             pair: ["cream","kasuri methi"] },
-  rice:     { base: ["peas","carrot","beans","bay leaf"],                   pair: ["onion","cashew"] },
-  pasta:    { base: ["garlic","olive oil","parmesan","basil"],              pair: ["cherry tomato","spinach"] },
-  oats:     { base: ["banana","honey","cinnamon"],                          pair: ["almond","blueberry"] },
-  spinach:  { base: ["garlic","olive oil","nutmeg"],                        pair: ["lemon","pine nuts"] },
-  mushroom: { base: ["garlic","thyme","butter"],                            pair: ["parmesan","truffle oil"] },
-  broccoli: { base: ["garlic","olive oil","chili flakes"],                  pair: ["lemon","parmesan"] },
+  chicken:    { base: ["garlic","ginger","lemon","black pepper","onion"],    pair: ["spinach","capsicum","mushroom"] },
+  lamb:       { base: ["onion","ginger","garlic","curd","bay leaf"],          pair: ["potato","turnip"] },
+  fish:       { base: ["lemon","dill","garlic","capers"],                     pair: ["asparagus","cherry tomato"] },
+  egg:        { base: ["onion","tomato","chili","coriander"],                 pair: ["capsicum","cheese"] },
+  paneer:     { base: ["capsicum","tomato","onion","kasuri methi"],           pair: ["green_peas","spinach"] },
+  tofu:       { base: ["soy sauce","ginger","garlic","sesame oil"],           pair: ["bok choy","mushroom","edamame"] },
+  toor_dal:   { base: ["ghee","cumin","asafoetida","garlic","tomato"],        pair: ["spinach","lemon"] },
+  urad_dal:   { base: ["ghee","cumin","asafoetida","ginger"],                 pair: ["toor_dal","moong_dal"] },
+  moong_dal:  { base: ["ghee","cumin","ginger","garlic"],                     pair: ["spinach","lemon"] },
+  chickpeas:  { base: ["onion","tomato","cumin","amchur"],                    pair: ["potato","tamarind"] },
+  rajma:      { base: ["onion","tomato","ginger","garam masala"],             pair: ["cream","kasuri methi"] },
+  rice:       { base: ["peas","carrot","beans","bay leaf"],                   pair: ["onion","cashew"] },
+  pasta:      { base: ["garlic","olive_oil","parmesan","basil"],              pair: ["cherry tomato","spinach"] },
+  oats:       { base: ["banana","honey","cinnamon"],                          pair: ["almond","blueberry"] },
+  spinach:    { base: ["garlic","olive_oil","nutmeg"],                        pair: ["lemon","pine nuts"] },
+  mushroom:   { base: ["garlic","thyme","butter"],                            pair: ["parmesan","truffle oil"] },
+  broccoli:   { base: ["garlic","olive_oil","chili flakes"],                  pair: ["lemon","parmesan"] },
 }
 
 const GOAL_BOOST = {
   muscle_gain: new Set(["egg","paneer","chicken","chickpeas","toor_dal","quinoa","greek yogurt"]),
   weight_loss:  new Set(["spinach","broccoli","cucumber","lemon","oats"]),
-  balanced:     new Set(["tomato","onion","garlic","olive oil","curd"]),
-  maintenance:  new Set(["tomato","onion","garlic","olive oil","curd"]),
+  balanced:     new Set(["tomato","onion","garlic","olive_oil","curd"]),
+  maintenance:  new Set(["tomato","onion","garlic","olive_oil","curd"]),
 }
 
 function generateSuggestions(lower, goal, location, maxResults = 4) {
@@ -695,7 +767,7 @@ function generateSuggestions(lower, goal, location, maxResults = 4) {
     entry.pair.forEach((s) => add(s, 2))
   })
 
-  profile.tempering.forEach((s) => add(s.split(" ")[0], 2))  // first word to stay clean
+  profile.tempering.forEach((s) => add(s.split(" ")[0], 2))
   profile.aromatics.forEach((s) => add(s.split(" ")[0], 1))
 
   Object.keys(scores).forEach((item) => {
@@ -705,63 +777,17 @@ function generateSuggestions(lower, goal, location, maxResults = 4) {
   return Object.entries(scores)
     .sort(([, a], [, b]) => b - a)
     .slice(0, maxResults)
-    .map(([item]) => capitalize(item))  // return plain strings to match RecipeDisplay expectation
+    .map(([item]) => capitalize(item))
 }
 
-
 // ─────────────────────────────────────────────────────────────
-//  MORE DISH ALIASES  (South Indian, street food, breakfast,
-//  global additions)
+//  MORE DISH ALIASES  (already merged into main DISH_ALIASES above)
 // ─────────────────────────────────────────────────────────────
-Object.assign(DISH_ALIASES, {
-  // South Indian
-  pesarattu:        ["moong dal", "ginger", "green chili", "cumin", "onion"],
-  uttapam:          ["rice", "urad dal", "onion", "tomato", "green chili", "coriander"],
-  appam:            ["rice", "coconut milk", "urad dal", "fenugreek seeds"],
-  avial:            ["raw banana", "carrot", "pumpkin", "coconut", "yogurt", "turmeric", "curry leaves"],
-  thoran:           ["cabbage", "coconut", "turmeric", "mustard seeds", "curry leaves"],
-  puttu:            ["rice flour", "coconut", "salt"],
-  kootu:            ["chickpeas", "pumpkin", "coconut", "cumin", "turmeric"],
-  chettinad_chicken:["chicken", "black pepper", "kalpasi", "marathi mokku", "garlic", "ginger", "coconut"],
-  fish_molee:       ["fish", "coconut milk", "turmeric", "green chili", "ginger", "onion"],
-  kerala_prawn:     ["shrimp", "coconut milk", "raw mango", "mustard seeds", "curry leaves"],
-  // Street food
-  bhel_puri:        ["puffed rice", "potato", "onion", "tomato", "tamarind chutney", "green chutney", "sev"],
-  pani_puri:        ["semolina", "potato", "chickpeas", "tamarind water", "mint", "cumin"],
-  sev_puri:         ["semolina", "potato", "onion", "tomato", "sev", "chutneys"],
-  dahi_puri:        ["semolina", "potato", "curd", "tamarind chutney", "sev", "chaat masala"],
-  aloo_tikki:       ["potato", "green chili", "coriander", "bread crumbs", "chaat masala"],
-  kathi_roll:       ["whole wheat flour", "chicken", "onion", "capsicum", "egg", "green chutney"],
-  frankie:          ["whole wheat flour", "potato", "onion", "chaat masala", "green chili"],
-  // North Indian
-  rogan_josh:       ["lamb", "yogurt", "kashmiri mirch", "ginger", "garlic", "fennel", "cardamom"],
-  laal_maas:        ["lamb", "mathania chili", "garlic", "ghee", "coriander", "yogurt"],
-  nihari:           ["lamb", "bone marrow", "atta", "ginger", "nihari masala", "ghee"],
-  haleem:           ["lamb", "wheat", "lentils", "ginger", "garlic", "onion", "ghee"],
-  shahi_tukda:      ["bread", "milk", "sugar", "saffron", "cardamom", "ghee", "almonds"],
-  bedmi_puri:       ["whole wheat flour", "urad dal", "fennel", "ginger", "ghee"],
-  // Breakfast
-  poori_bhaji:      ["whole wheat flour", "potato", "onion", "tomato", "turmeric", "mustard seeds"],
-  besan_chilla:     ["gram flour", "onion", "tomato", "green chili", "coriander", "turmeric"],
-  vermicelli_upma:  ["vermicelli", "mustard seeds", "onion", "carrot", "green peas", "curry leaves"],
-  sabudana_khichdi: ["sago", "potato", "peanuts", "cumin", "green chili", "ghee"],
-  bread_upma:       ["bread", "onion", "tomato", "green chili", "mustard seeds", "curry leaves"],
-  // Global
-  shakshuka:        ["egg", "tomato", "capsicum", "onion", "cumin", "paprika", "olive oil"],
-  bibimbap:         ["rice", "egg", "spinach", "carrot", "mushroom", "soy sauce", "sesame oil"],
-  pad_thai:         ["rice noodles", "shrimp", "egg", "bean sprouts", "peanuts", "lime", "fish sauce"],
-  pho:              ["rice noodles", "beef", "star anise", "ginger", "onion", "bean sprouts", "lime"],
-  shawarma:         ["chicken", "yogurt", "garlic", "lemon", "cumin", "coriander", "flatbread"],
-  fajitas:          ["chicken", "capsicum", "onion", "lime", "cumin", "smoked paprika", "corn tortillas"],
-  greek_salad:      ["tomato", "cucumber", "onion", "olive oil", "lemon", "oregano"],
-  congee:           ["rice", "ginger", "spring onion", "soy sauce", "sesame oil"],
-  laksa:            ["rice noodles", "coconut milk", "shrimp", "tofu", "lemongrass", "turmeric"],
-  okonomiyaki:      ["cabbage", "egg", "flour", "spring onion", "bonito flakes", "mayo"],
-})
 
 // ─────────────────────────────────────────────────────────────
 //  MICRONUTRIENT DATABASE  (per 100g)
 //  fibre(g) · iron(mg) · calcium(mg) · vitC(mg) · vitA(mcg RAE)
+//  Added: urad_dal, chana_dal, rice_noodles
 // ─────────────────────────────────────────────────────────────
 const MICRO_DB = {
   chicken:      { fibre: 0,    iron: 1.3, calcium: 11,  vitC: 0,  vitA: 21  },
@@ -775,10 +801,13 @@ const MICRO_DB = {
   rice:         { fibre: 0.4,  iron: 0.2, calcium: 10,  vitC: 0,  vitA: 0   },
   brown_rice:   { fibre: 1.8,  iron: 0.4, calcium: 23,  vitC: 0,  vitA: 0   },
   pasta:        { fibre: 1.8,  iron: 1.3, calcium: 7,   vitC: 0,  vitA: 0   },
+  rice_noodles: { fibre: 0.5,  iron: 0.3, calcium: 7,   vitC: 0,  vitA: 0   },  // ← NEW
   potato:       { fibre: 2.2,  iron: 0.8, calcium: 12,  vitC: 20, vitA: 2   },
   sweet_potato: { fibre: 3.0,  iron: 0.6, calcium: 30,  vitC: 20, vitA: 961 },
   moong_dal:    { fibre: 7.6,  iron: 6.7, calcium: 132, vitC: 4,  vitA: 6   },
   toor_dal:     { fibre: 8.0,  iron: 5.3, calcium: 73,  vitC: 0,  vitA: 3   },
+  urad_dal:     { fibre: 8.0,  iron: 7.6, calcium: 138, vitC: 0,  vitA: 0   },  // ← NEW
+  chana_dal:    { fibre: 8.1,  iron: 4.9, calcium: 102, vitC: 1,  vitA: 2   },  // ← NEW
   chickpeas:    { fibre: 12.2, iron: 4.3, calcium: 105, vitC: 4,  vitA: 3   },
   rajma:        { fibre: 15.2, iron: 5.5, calcium: 83,  vitC: 5,  vitA: 0   },
   masoor_dal:   { fibre: 7.9,  iron: 6.5, calcium: 56,  vitC: 1,  vitA: 0   },
@@ -838,6 +867,7 @@ function computeMicros(lower) {
 const ALLERGEN_TAGS = {
   egg:          ["Eggs"],
   pasta:        ["Gluten"],
+  rice_noodles: ["Gluten-Free"],   // informational: explicitly gluten-free grain
   semolina:     ["Gluten"],
   paneer:       ["Dairy"],
   milk:         ["Dairy"],
@@ -855,6 +885,7 @@ const ALLERGEN_TAGS = {
   soy_chunks:   ["Soy"],
   fish:         ["Fish"],
   wheat_flour:  ["Gluten"],
+  urad_dal:     ["Gluten-Free"],   // informational: urad dal is gluten-free
   bread:        ["Gluten", "Eggs", "Dairy"],
 }
 
@@ -869,7 +900,6 @@ function detectAllergens(lower) {
 
 // ─────────────────────────────────────────────────────────────
 //  BUDGET SWAP ENGINE
-//  Per-ingredient cheaper alternatives with savings estimate.
 // ─────────────────────────────────────────────────────────────
 const BUDGET_SWAPS_DB = {
   paneer:    { swap: "Tofu or scrambled egg",     saving: "~40%", note: "Same protein hit, much lighter on budget" },
@@ -897,7 +927,6 @@ function getBudgetSwaps(lower) {
 
 // ─────────────────────────────────────────────────────────────
 //  COMMON MISTAKES ENGINE
-//  Ingredient-level and cuisine-level warnings.
 // ─────────────────────────────────────────────────────────────
 const INGREDIENT_MISTAKES = {
   chicken:    [
@@ -924,6 +953,14 @@ const INGREDIENT_MISTAKES = {
     "Pressure cook fully — undercooked moong causes bloating",
     "Tadka must go in over hot oil at the very end for maximum fragrance",
   ],
+  urad_dal:   [
+    "Soak for at least 30 min — under-soaked urad dal stays dense and takes far longer to cook",
+    "For idli/dosa batter: grind urad dal with cold water for a light, airy batter — warm water makes it dense",
+  ],
+  chana_dal:  [
+    "Don't skip soaking — unsoaked chana dal cooks unevenly, hard on the outside, mushy inside",
+    "It should hold its shape after cooking — if it's dissolving, you've overcooked it",
+  ],
   rajma:      [
     "Never eat undercooked kidney beans — they contain toxic lectins (phytohaemagglutinin)",
     "Must boil vigorously for at least 10 minutes before any simmering",
@@ -935,6 +972,10 @@ const INGREDIENT_MISTAKES = {
   rice:       [
     "Not washing removes excess starch — skipping this step makes rice sticky and clumped",
     "Don't lift the lid while steaming — escaping steam ruins texture",
+  ],
+  rice_noodles: [
+    "Never boil rice noodles — soak in room-temperature water, then finish in the pan",
+    "They continue cooking from residual heat — pull them off the heat 30 sec before they look done",
   ],
   spinach:    [
     "Add spinach in the last 30 seconds — it wilts instantly and overcooking turns it mushy",
@@ -983,14 +1024,12 @@ function getCommonMistakes(lower, location) {
 
   const byCuisine = CUISINE_MISTAKES[location] ?? []
 
-  // Dedupe and cap at 6
   const all = [...new Set([...byIngredient, ...byCuisine])]
   return all.slice(0, 6)
 }
 
 // ─────────────────────────────────────────────────────────────
 //  BEST PAIRED WITH ENGINE
-//  Cuisine + goal aware side dish and drink pairings.
 // ─────────────────────────────────────────────────────────────
 const PAIR_WITH_DB = {
   India: {
