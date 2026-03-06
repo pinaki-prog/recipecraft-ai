@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import RecipeDisplay from "../components/RecipeDisplay"
+import RecipeDisplay, { RecipeErrorBoundary } from "../components/RecipeDisplay"
 import { generateSmartRecipe, optimizeRecipe } from "../utils/generateSmartRecipe"
 import { normalizeInput, detectModeMismatch } from "../utils/normalizeInput"
+import MealPlanner from "../components/MealPlanner"
+import UserProfile, { calcTDEE } from "../components/UserProfile"
 
 // ─────────────────────────────────────────────────────────────
 //  Home.jsx  (v2 — Full Upgrade)
@@ -158,6 +160,160 @@ const MODE_CONFIG = {
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
+
+// ═══════════════════════════════════════════════════════════════
+//  DAILY NUTRITION TRACKER
+//  Floating panel — logs today's recipes. Resets at midnight.
+// ═══════════════════════════════════════════════════════════════
+
+const DEFAULT_DAILY_GOALS = { cal: 2000, p: 60, c: 250, f: 65 }
+
+function getGoals(profile) {
+  const stats = calcTDEE(profile)
+  if (!stats?.macros) return DEFAULT_DAILY_GOALS
+  return { cal: stats.macros.cal, p: stats.macros.protein, c: stats.macros.carbs, f: stats.macros.fats }
+}
+
+const DAILY_GOALS = { cal: 2000, p: 60, c: 250, f: 65 }
+
+function parseNum(v) { return parseFloat(String(v ?? "0").replace(/[^0-9.]/g, "")) || 0 }
+
+function DailyTracker({ log, onAdd, onRemove, onClose, currentRecipe, goals, weeklyTrend }) {
+  const [showWeek, setShowWeek] = useState(false)
+  const G = goals ?? DAILY_GOALS
+  const totals = log.reduce((acc, e) => ({
+    cal: acc.cal + (e.cal || 0),
+    p:   acc.p   + (e.p   || 0),
+    c:   acc.c   + (e.c   || 0),
+    f:   acc.f   + (e.f   || 0),
+  }), { cal: 0, p: 0, c: 0, f: 0 })
+
+  const pct = (val, goal) => Math.min(100, Math.round((val / Math.max(goal,1)) * 100))
+
+  const BARS = [
+    { label: "Cal",     val: Math.round(totals.cal), goal: G.cal, unit: "kcal", color: "bg-orange-500" },
+    { label: "Protein", val: Math.round(totals.p),   goal: G.p,   unit: "g",    color: "bg-blue-500"   },
+    { label: "Carbs",   val: Math.round(totals.c),   goal: G.c,   unit: "g",    color: "bg-purple-500" },
+    { label: "Fats",    val: Math.round(totals.f),   goal: G.f,   unit: "g",    color: "bg-pink-500"   },
+  ]
+
+  // Build 7-day chart data from weeklyTrend
+  const today = new Date()
+  const weekDays = Array.from({length:7},(_,i)=>{
+    const d = new Date(today); d.setDate(today.getDate()-6+i)
+    const key = d.toDateString()
+    const isToday = i===6
+    return {
+      label: isToday ? "Today" : d.toLocaleDateString("en",{weekday:"short"}),
+      cal: isToday ? Math.round(totals.cal) : Math.round(weeklyTrend?.[key]?.cal ?? 0),
+      key,
+    }
+  })
+  const maxCal = Math.max(...weekDays.map(d=>d.cal), G.cal)
+
+  return (
+    <div className="w-80 bg-[#0f1623] border border-white/15 rounded-2xl shadow-2xl p-5 mb-2">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="text-base font-bold text-white">🥗 Today's Log</p>
+          <p className="text-xs text-gray-500">{log.length} meal{log.length !== 1 ? "s" : ""} logged</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowWeek(w=>!w)}
+            className={`text-xs px-2 py-1 rounded-lg transition-colors ${showWeek ? "bg-orange-500/20 text-orange-400" : "text-gray-600 hover:text-gray-400"}`}
+            title="Weekly trend">📈</button>
+          <button onClick={onClose} className="text-gray-600 hover:text-gray-400 text-lg transition-colors">✕</button>
+        </div>
+      </div>
+
+      {/* Weekly trend chart */}
+      {showWeek && (
+        <div className="mb-4 bg-white/3 rounded-xl p-3">
+          <p className="text-xs font-semibold text-gray-500 mb-2">7-Day Calories vs Target ({G.cal} kcal)</p>
+          <div className="flex items-end gap-1 h-16">
+            {weekDays.map(({label, cal}, i) => {
+              const heightPct = maxCal > 0 ? (cal / maxCal) * 100 : 0
+              const over = cal > G.cal
+              const isToday = i===6
+              return (
+                <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                  <div className="w-full flex items-end justify-center" style={{height:"48px"}}>
+                    <div
+                      className={`w-full rounded-t transition-all duration-500 ${
+                        cal === 0 ? "bg-white/5"
+                        : over ? "bg-red-500/60"
+                        : isToday ? "bg-orange-500"
+                        : "bg-orange-500/40"}`}
+                      style={{height: cal === 0 ? "3px" : `${Math.max(4, heightPct)}%`}}
+                      title={`${label}: ${cal} kcal`}
+                    />
+                  </div>
+                  <span className={`text-[9px] ${isToday ? "text-orange-400 font-bold" : "text-gray-700"}`}>
+                    {label.slice(0,3)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Progress bars */}
+      <div className="space-y-2.5 mb-4">
+        {BARS.map(({ label, val, goal, unit, color }) => (
+          <div key={label}>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-gray-400">{label}</span>
+              <span className={`tabular-nums ${val > goal ? "text-red-400 font-semibold" : "text-gray-400"}`}>
+                {val} / {goal} {unit}
+              </span>
+            </div>
+            <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+              <div className={`h-full ${val > goal ? "bg-red-500" : color} rounded-full transition-all duration-500`}
+                style={{ width: `${pct(val, goal)}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Add current recipe ────────────────────────────── */}
+      {currentRecipe && (
+        <button
+          onClick={() => onAdd({
+            id:    currentRecipe.id ?? Date.now().toString(36),
+            title: currentRecipe.title,
+            cal:   parseNum(currentRecipe.calories),
+            p:     parseNum(currentRecipe.protein),
+            c:     parseNum(currentRecipe.carbs),
+            f:     parseNum(currentRecipe.fats),
+          })}
+          className="w-full py-2.5 mb-3 rounded-xl bg-green-500/15 border border-green-500/30 text-green-400 text-sm font-semibold hover:bg-green-500/25 transition-all">
+          + Add "{currentRecipe.title?.slice(0, 20)}{currentRecipe.title?.length > 20 ? "…" : ""}"
+        </button>
+      )}
+
+      {/* ── Logged meals list ─────────────────────────────── */}
+      {log.length === 0
+        ? <p className="text-xs text-gray-600 text-center py-2">No meals logged yet today</p>
+        : (
+          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+            {log.map(entry => (
+              <div key={entry.id} className="flex items-center justify-between px-3 py-2 bg-white/5 rounded-xl">
+                <div>
+                  <p className="text-xs text-gray-300 font-medium">{entry.title?.slice(0, 22)}</p>
+                  <p className="text-xs text-gray-600">{Math.round(entry.cal)} kcal · {Math.round(entry.p)}g P</p>
+                </div>
+                <button onClick={() => onRemove(entry.id)}
+                  className="text-gray-700 hover:text-red-400 text-xs transition-colors ml-2">✕</button>
+              </div>
+            ))}
+          </div>
+        )
+      }
+    </div>
+  )
+}
+
 export default function Home() {
   // ── Form state ─────────────────────────────────────────────
   const [theme,            setTheme]            = useState("dark")
@@ -175,6 +331,7 @@ export default function Home() {
   const [recipe,           setRecipe]           = useState(null)
   const [history,          setHistory]          = useState([])
   const [loading,          setLoading]          = useState(false)
+  const [genError,         setGenError]         = useState(null)
   const [favourites,       setFavourites]       = useState(() => new Set(readStorage("favouriteRecipes", [])))
 
   // ── Input feedback state ────────────────────────────────────
@@ -191,11 +348,23 @@ export default function Home() {
   // ── Optimizer state ─────────────────────────────────────────
   const [showOptimizer,    setShowOptimizer]    = useState(false)
   const [optimizerBudget,  setOptimizerBudget]  = useState(100)
+  const [recentIngredients,setRecentIngredients]= useState(() => readStorage("recentIngredients", []))
+  const [historySearch,    setHistorySearch]    = useState("")
+  const [voiceListening,   setVoiceListening]   = useState(false)
+  const [dailyLog,         setDailyLog]         = useState(() => readStorage("dailyLog", []))
+  const [showTracker,      setShowTracker]      = useState(false)
+  const [showPlanner,      setShowPlanner]      = useState(false)
+  const [showProfile,      setShowProfile]      = useState(false)
+  const [userProfile,      setUserProfile]      = useState(() => readStorage("userProfile", null))
+  const [weeklyTrend,      setWeeklyTrend]      = useState(() => readStorage("weeklyTrend", {}))
+  const [recipeRatings,    setRecipeRatings]    = useState(() => readStorage("recipeRatings", {}))
+  const [remixRecipe,      setRemixRecipe]      = useState(null)  // recipe being remixed
 
   // ── Derived ────────────────────────────────────────────────
   const isDark       = theme === "dark"
   const modeCfg      = MODE_CONFIG[inputMode]
   const currSymbol   = CURRENCY_SYMBOL[location] ?? "₹"
+  const profileGoals = getGoals(userProfile)   // TDEE-based or default
 
   // ── Effects ────────────────────────────────────────────────
   useEffect(() => {
@@ -203,6 +372,18 @@ export default function Home() {
     if (saved) { setTheme(saved); document.documentElement.classList.toggle("dark", saved === "dark") }
     else        { document.documentElement.classList.add("dark") }
     setHistory(readStorage("savedRecipes", []))
+    setRecentIngredients(readStorage("recentIngredients", []))
+    // Reset daily log at midnight
+    const savedLog  = readStorage("dailyLog",     [])
+    const savedDate = readStorage("dailyLogDate", null)
+    const today     = new Date().toDateString()
+    if (savedDate === today) {
+      setDailyLog(savedLog)
+    } else {
+      localStorage.setItem("dailyLog",     JSON.stringify([]))
+      localStorage.setItem("dailyLogDate", JSON.stringify(today))
+      setDailyLog([])
+    }
 
     const glow = document.createElement("div")
     glow.className = "pointer-events-none fixed w-40 h-40 rounded-full bg-orange-500/20 blur-3xl z-50"
@@ -345,6 +526,50 @@ export default function Home() {
     })
   }
 
+  const rateRecipe = (recipeId, stars) => {
+    const next = { ...recipeRatings, [recipeId]: stars }
+    setRecipeRatings(next)
+    localStorage.setItem("recipeRatings", JSON.stringify(next))
+  }
+
+  // Remix effect — when remixRecipe is set, re-run generate with tweaked params
+  useEffect(() => {
+    if (!remixRecipe) return
+    const { recipe: src, opts } = remixRecipe
+    setRemixRecipe(null)
+    const ingredients = src.ingredients?.map(i => i.item) ?? []
+    if (!ingredients.length) return
+    const remixParams = {
+      ingredients,
+      excluded:  src.excluded ?? [],
+      signals:   {},
+      goal:      opts.goal      ?? goal,
+      spice,
+      budget:    opts.budget    ?? budget,
+      location,
+      skill,
+      servings,
+      quantities: {},
+      ...(opts.dietary ? { signals: { dietary: opts.dietary } } : {}),
+    }
+    setLoading(true)
+    setGenError(null)
+    setTimeout(() => {
+      try {
+        const result = generateSmartRecipe(remixParams)
+        if (result?.error) {
+          setGenError(result.errorMessage ?? "Remix failed. Try again.")
+        } else if (result) {
+          setRecipe(result)
+          const updated = [result, ...readStorage("savedRecipes", [])].slice(0, 20)
+          localStorage.setItem("savedRecipes", JSON.stringify(updated))
+          setHistory(updated)
+        }
+      } catch { setGenError("Remix failed.") }
+      finally { setLoading(false) }
+    }, 50)
+  }, [remixRecipe])
+
   // ── Mode switch ──────────────────────────────────────────────
   const switchMode = newMode => {
     setInputMode(newMode)
@@ -357,6 +582,25 @@ export default function Home() {
     setSignalBanner(null)
   }
 
+  // ── Voice input ──────────────────────────────────────────────
+  const startVoice = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { alert("Voice input is not supported in this browser. Try Chrome."); return }
+    const rec = new SR()
+    rec.lang = "en-IN"
+    rec.interimResults = false
+    rec.maxAlternatives = 1
+    setVoiceListening(true)
+    rec.start()
+    rec.onresult = e => {
+      const transcript = e.results[0][0].transcript
+      setRawInput(prev => prev ? prev + ", " + transcript : transcript)
+      setVoiceListening(false)
+    }
+    rec.onerror = () => setVoiceListening(false)
+    rec.onend   = () => setVoiceListening(false)
+  }
+
   // ── Main generate ────────────────────────────────────────────
   const runGenerate = (useOptimizer = false) => {
     if (!rawInput.trim()) {
@@ -366,7 +610,7 @@ export default function Home() {
     }
 
     // ── v2: destructure all fields ─────────────────────────────
-    const { ingredients, excluded, signals, unknown } = normalizeInput(rawInput)
+    const { ingredients, excluded, signals, unknown, quantities = {} } = normalizeInput(rawInput)
 
     if (ingredients.length === 0 && excluded.length === 0) {
       setInputError(true)
@@ -388,23 +632,39 @@ export default function Home() {
       location,
       skill,
       servings,
+      quantities,  // user-specified amounts from parseRawQuantities
       // dietary filter applied as signal if set
       ...(dietary !== "any" ? { signals: { ...signals, dietary } } : {}),
     }
 
+    setGenError(null)
     setTimeout(() => {
-      const result = useOptimizer
-        ? optimizeRecipe({ ...params, maxCostPerServing: optimizerBudget })
-        : generateSmartRecipe(params)
+      try {
+        const result = useOptimizer
+          ? optimizeRecipe({ ...params, maxCostPerServing: optimizerBudget })
+          : generateSmartRecipe(params)
 
-      setRecipe(result)
-
-      if (result) {
-        const updated = [result, ...readStorage("savedRecipes", [])].slice(0, 20)
-        localStorage.setItem("savedRecipes", JSON.stringify(updated))
-        setHistory(updated)
+        if (result?.error) {
+          setGenError(result.errorMessage ?? "Something went wrong. Please try different ingredients.")
+          setRecipe(null)
+        } else {
+          setRecipe(result)
+          if (result) {
+            const updated = [result, ...readStorage("savedRecipes", [])].slice(0, 20)
+            localStorage.setItem("savedRecipes", JSON.stringify(updated))
+            setHistory(updated)
+            // Save recent ingredients
+            if (result.ingredients?.length > 0) {
+              const merged = [...new Set([...result.ingredients.map(i=>i.item), ...readStorage("recentIngredients",[])])].slice(0,15)
+              localStorage.setItem("recentIngredients", JSON.stringify(merged))
+              setRecentIngredients(merged)
+            }
+          }
+        }
+      } catch (err) {
+        setGenError("Unexpected error: " + (err?.message ?? "Please try again."))
+        setRecipe(null)
       }
-
       setLoading(false)
     }, 1500)
   }
@@ -420,6 +680,79 @@ export default function Home() {
 
   return (
     <div className={`relative min-h-screen transition-colors duration-500 ${isDark ? "bg-[#0b0f19] text-white" : "bg-slate-100 text-gray-900"}`}>
+
+      {/* ── UserProfile overlay ───────────────────────────────── */}
+      <AnimatePresence>
+        {showProfile && (
+          <UserProfile
+            onClose={() => setShowProfile(false)}
+            onSave={(profile) => {
+              setUserProfile(profile)
+              setShowProfile(false)
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── Meal Planner overlay ─────────────────────────────── */}
+      <AnimatePresence>
+        {showPlanner && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}>
+            <MealPlanner onClose={() => setShowPlanner(false)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Daily tracker FAB ──────────────────────────────────── */}
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2">
+        {showTracker && (
+          <DailyTracker
+            log={dailyLog}
+            goals={profileGoals}
+            weeklyTrend={weeklyTrend}
+            onAdd={entry => {
+              const next = [...dailyLog, entry]
+              setDailyLog(next)
+              localStorage.setItem("dailyLog", JSON.stringify(next))
+              localStorage.setItem("dailyLogDate", JSON.stringify(new Date().toDateString()))
+              // Save today's totals to weekly trend
+              const todayKey  = new Date().toDateString()
+              const dayTotals = next.reduce((a,e)=>({cal:a.cal+(e.cal||0),p:a.p+(e.p||0),c:a.c+(e.c||0),f:a.f+(e.f||0)}),{cal:0,p:0,c:0,f:0})
+              const updTrend  = { ...weeklyTrend, [todayKey]: dayTotals }
+              setWeeklyTrend(updTrend)
+              localStorage.setItem("weeklyTrend", JSON.stringify(updTrend))
+            }}
+            onRemove={id => {
+              const next = dailyLog.filter(e => e.id !== id)
+              setDailyLog(next)
+              localStorage.setItem("dailyLog", JSON.stringify(next))
+              const todayKey  = new Date().toDateString()
+              const dayTotals = next.reduce((a,e)=>({cal:a.cal+(e.cal||0),p:a.p+(e.p||0),c:a.c+(e.c||0),f:a.f+(e.f||0)}),{cal:0,p:0,c:0,f:0})
+              const updTrend  = { ...weeklyTrend, [todayKey]: dayTotals }
+              setWeeklyTrend(updTrend)
+              localStorage.setItem("weeklyTrend", JSON.stringify(updTrend))
+            }}
+            onClose={() => setShowTracker(false)}
+            currentRecipe={recipe}
+          />
+        )}
+        <button onClick={() => setShowTracker(t => !t)}
+          className="w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/30 flex items-center justify-center text-xl hover:scale-105 transition-transform"
+          title="Daily nutrition tracker">
+          {showTracker ? "✕" : "🥗"}
+        </button>
+        <button onClick={() => setShowPlanner(p => !p)}
+          className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg shadow-blue-500/30 flex items-center justify-center text-xl hover:scale-105 transition-transform"
+          title="7-day meal planner">
+          📅
+        </button>
+        <button onClick={() => setShowProfile(p => !p)}
+          className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-violet-600 text-white shadow-lg shadow-purple-500/30 flex items-center justify-center text-xl hover:scale-105 transition-transform"
+          title="Your profile & TDEE">
+          {userProfile?.name ? userProfile.name.slice(0,1).toUpperCase() : "👤"}
+        </button>
+      </div>
 
       {/* ── Theme toggle ─────────────────────────────────────── */}
       <div className="absolute top-6 right-6 z-10">
@@ -471,7 +804,7 @@ export default function Home() {
         viewport={{ once: true }} transition={{ duration: 1, delay: 0.2 }}
         className="mt-20 max-w-3xl mx-auto relative px-6">
 
-        <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-purple-600 opacity-20 blur-2xl rounded-3xl" />
+        <div className="absolute inset-0 bg-gradient-to-r from-orange-500 to-purple-600 opacity-15 blur-2xl rounded-3xl" />
         <div className={`relative backdrop-blur-xl border rounded-3xl p-8 shadow-2xl ${isDark ? "bg-white/5 border-white/10" : "bg-white border-gray-200"}`}>
 
           {/* ── Mode toggle ─────────────────────────────────── */}
@@ -511,6 +844,26 @@ export default function Home() {
             </motion.div>
           </AnimatePresence>
 
+          {/* ── Recent Ingredients chips ─────────────────── */}
+          {recentIngredients.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {recentIngredients.slice(0, 8).map(item => (
+                <button key={item}
+                  onClick={() => setRawInput(prev => prev ? prev + ", " + item.replace(/_/g," ") : item.replace(/_/g," "))}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-all
+                    ${isDark
+                      ? "bg-white/5 border-white/10 text-gray-400 hover:bg-orange-500/15 hover:border-orange-500/30 hover:text-orange-300"
+                      : "bg-gray-100 border-gray-200 text-gray-500 hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600"}`}>
+                  {item.replace(/_/g," ")}
+                </button>
+              ))}
+              <button onClick={() => { localStorage.removeItem("recentIngredients"); setRecentIngredients([]) }}
+                className="px-3 py-1 rounded-full text-xs border border-dashed border-white/10 text-gray-600 hover:text-gray-400 transition-colors">
+                ✕ clear
+              </button>
+            </div>
+          )}
+
           {/* ── Textarea ─────────────────────────────────────── */}
           <motion.div animate={inputError ? { x: [-10, 10, -8, 8, -4, 4, 0] } : { x: 0 }}
             transition={{ duration: 0.4 }}>
@@ -526,6 +879,22 @@ export default function Home() {
                     ? isDark ? "border-amber-500/50 bg-amber-500/5" : "border-amber-400 bg-amber-50"
                     : isDark ? "border-white/20 text-gray-100 focus:border-orange-500/50 bg-white/5"
                              : "border-gray-300 text-gray-800 focus:border-orange-400 bg-white"}`} />
+
+            {/* ── Voice input button ────────────────────────── */}
+            <div className="flex items-center gap-2 mt-2">
+              <button onClick={startVoice} disabled={voiceListening}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium border transition-all
+                  ${voiceListening
+                    ? "bg-red-500/20 border-red-500/40 text-red-400 animate-pulse"
+                    : isDark
+                      ? "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white"
+                      : "bg-gray-100 border-gray-200 text-gray-500 hover:bg-gray-200"}`}>
+                {voiceListening ? "🔴 Listening…" : "🎙 Voice"}
+              </button>
+              {voiceListening && (
+                <span className="text-xs text-gray-500 animate-pulse">Speak ingredient names clearly…</span>
+              )}
+            </div>
 
             {/* Input error */}
             {inputError && (
@@ -736,8 +1105,7 @@ export default function Home() {
             </motion.button>
           </div>
         </div>
-      </motion.div>
-
+        </motion.div>
       {/* ── Loading skeleton ─────────────────────────────────── */}
       <AnimatePresence>
         {loading && (
@@ -756,17 +1124,35 @@ export default function Home() {
         )}
       </AnimatePresence>
 
+      {/* ── Error card ──────────────────────────────────────── */}
+      {genError && !loading && (
+        <div className="mt-8 max-w-4xl mx-auto px-6">
+          <div className="p-5 bg-red-500/10 border border-red-500/25 rounded-2xl flex items-start gap-4">
+            <span className="text-2xl shrink-0">⚠️</span>
+            <div>
+              <p className="text-base font-semibold text-red-400 mb-1">Could not generate recipe</p>
+              <p className="text-sm text-gray-400 leading-relaxed">{genError}</p>
+              <p className="text-xs text-gray-600 mt-2">Try fewer ingredients, remove unusual combinations, or switch input mode.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Recipe output ────────────────────────────────────── */}
       <AnimatePresence>
         {recipe && !loading && (
           <motion.div initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }} transition={{ duration: 0.8 }}
             className="mt-16 max-w-4xl mx-auto px-6 pb-16">
-            <RecipeDisplay
-              recipe={recipe}
-              isFavourite={favourites.has(recipe.title)}
-              onToggleFavourite={() => toggleFavourite(recipe.title)}
-            />
+            <RecipeErrorBoundary>
+              <RecipeDisplay
+                recipe={recipe}
+                isFavourite={favourites.has(recipe.title)}
+                onToggleFavourite={() => toggleFavourite(recipe.title)}
+                userProfile={userProfile}
+                onRemix={(opts) => setRemixRecipe({ recipe, opts })}
+              />
+            </RecipeErrorBoundary>
           </motion.div>
         )}
       </AnimatePresence>
@@ -774,17 +1160,31 @@ export default function Home() {
       {/* ── History ──────────────────────────────────────────── */}
       {sortedHistory.length > 1 && !loading && (
         <div className="mt-12 max-w-4xl mx-auto px-6 pb-24">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className={`text-xl font-semibold ${isDark ? "text-gray-200" : "text-gray-700"}`}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className={`text-2xl font-bold ${isDark ? "text-gray-100" : "text-gray-700"}`}>
               Previous Creations
             </h2>
-            <span className={`text-sm ${isDark ? "text-gray-500" : "text-gray-400"}`}>
+            <span className={`text-sm font-semibold ${isDark ? "text-gray-400" : "text-gray-500"}`}>
               {sortedHistory.length} recipes
             </span>
           </div>
+          {sortedHistory.length > 3 && (
+            <div className="mb-5">
+              <input type="text" value={historySearch}
+                onChange={e => setHistorySearch(e.target.value)}
+                placeholder="Search recipes…"
+                className={`w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors
+                  ${isDark
+                    ? "bg-white/5 border-white/10 text-gray-200 placeholder-gray-600 focus:border-orange-500/40"
+                    : "bg-white border-gray-200 text-gray-700 placeholder-gray-400 focus:border-orange-400"}`}
+              />
+            </div>
+          )}
 
           <div className="grid md:grid-cols-2 gap-4">
-            {sortedHistory.slice(1).map((item, index) => {
+            {sortedHistory.slice(1)
+              .filter(item => !historySearch.trim() || item.title?.toLowerCase().includes(historySearch.toLowerCase()))
+              .map((item, index) => {
               const isFav = favourites.has(item.title)
               const dietEmoji   = item.dietaryProfile?.emoji ?? ""
               const topTag      = item.healthTags?.[0]?.tag?.replace(/-/g, " ") ?? null
@@ -807,16 +1207,30 @@ export default function Home() {
                     {isFav ? "⭐" : "☆"}
                   </button>
 
+                  {/* Star rating */}
+                  <div className="absolute bottom-4 right-4 flex gap-0.5" onClick={e => e.stopPropagation()}>
+                    {[1,2,3,4,5].map(star => {
+                      const rated = recipeRatings[item.id] ?? 0
+                      return (
+                        <button key={star}
+                          onClick={() => rateRecipe(item.id, star === rated ? 0 : star)}
+                          className={`text-base transition-all hover:scale-110 ${star <= rated ? "opacity-100" : "opacity-20 hover:opacity-60"}`}>
+                          ★
+                        </button>
+                      )
+                    })}
+                  </div>
+
                   {/* Top row — flag + location + goal + dietary */}
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className="text-xl">{CUISINE_FLAGS[item.location] ?? "🍽"}</span>
                     {item.location && (
-                      <span className={`text-sm font-medium ${isDark ? "text-gray-400" : "text-gray-500"}`}>
+                      <span className={`text-sm font-semibold ${isDark ? "text-gray-300" : "text-gray-600"}`}>
                         {item.location}
                       </span>
                     )}
                     {item.goal && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${isDark ? "bg-white/10 text-gray-400" : "bg-gray-100 text-gray-500"}`}>
+                      <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${isDark ? "bg-white/10 text-gray-300" : "bg-gray-100 text-gray-600"}`}>
                         {item.goal.replace("_", " ")}
                       </span>
                     )}
@@ -833,12 +1247,12 @@ export default function Home() {
                   </div>
 
                   {/* Title */}
-                  <h4 className={`font-semibold text-base pr-8 leading-snug mb-2 ${isDark ? "text-white" : "text-gray-800"}`}>
+                  <h4 className={`font-bold text-lg pr-8 leading-snug mb-2 ${isDark ? "text-white" : "text-gray-800"}`}>
                     {item.title}
                   </h4>
 
                   {/* Stats row */}
-                  <div className={`flex items-center gap-3 text-sm flex-wrap ${isDark ? "text-gray-500" : "text-gray-400"}`}>
+                  <div className={`flex items-center gap-3 text-sm font-semibold flex-wrap ${isDark ? "text-gray-400" : "text-gray-500"}`}>
                     {item.estimatedCost && <span>{item.estimatedCost}</span>}
                     {item.calories      && <span>· {item.calories}</span>}
                     {item.healthScore   && (

@@ -6,6 +6,48 @@ import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis,
   ResponsiveContainer, Tooltip,
 } from "recharts"
+import { NUTRITION_DB } from "../utils/nutritionDB"
+
+
+// ═══════════════════════════════════════════════════════════════
+//  ERROR BOUNDARY
+//  Catches any render crash inside RecipeDisplay gracefully.
+//  React class component — only class components can be error boundaries.
+// ═══════════════════════════════════════════════════════════════
+import React from "react"
+
+export class RecipeErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error, info) {
+    console.error("[RecipeDisplay] render error:", error, info.componentStack)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="max-w-4xl mx-auto px-6 mt-10">
+          <div className="p-6 bg-red-500/10 border border-red-500/25 rounded-2xl text-center">
+            <p className="text-2xl mb-3">⚠️</p>
+            <p className="text-red-400 font-semibold text-base mb-2">Recipe display crashed</p>
+            <p className="text-gray-500 text-sm mb-4">{this.state.error?.message ?? "Unknown render error"}</p>
+            <button
+              onClick={() => this.setState({ hasError: false, error: null })}
+              className="px-5 py-2 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 text-sm font-medium hover:bg-red-500/30 transition-all"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 //  RecipeDisplay.jsx  (v2 — Full Upgrade)
@@ -374,7 +416,7 @@ function GlycemicPanel({ profile }) {
 
               {/* GI bar */}
               <div>
-                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                <div className="flex justify-between text-sm text-gray-400 font-medium mb-1">
                   <span>Low GI (&lt;55)</span>
                   <span>High GI (≥70)</span>
                 </div>
@@ -474,7 +516,7 @@ function ProteinQualityPanel({ quality }) {
               {/* PDCAAS bar */}
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-xs text-gray-500">PDCAAS Score</span>
+                  <span className="text-sm text-gray-400 font-medium">PDCAAS Score</span>
                   <span className="text-sm font-bold text-violet-400">
                     {quality.avgPdcaas?.toFixed(2) ?? "—"} / 1.00
                   </span>
@@ -700,23 +742,48 @@ function OptimizationBanner({ recipe }) {
 //  MAIN EXPORT
 // ═══════════════════════════════════════════════════════════════
 
-export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFavourite }) {
+export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFavourite, userProfile, onRemix }) {
   const cardRef      = useRef(null)
   const intervalRefs = useRef({})
 
-  const [servings,     setServings]     = useState(1)
-  const [stepTimers,   setStepTimers]   = useState({})
-  const [toast,        setToast]        = useState("")
-  const [showRadar,    setShowRadar]    = useState(false)
-  const [pdfMode,      setPdfMode]      = useState(false)
-  const [showMistakes, setShowMistakes] = useState(false)
-  const [showSwaps,    setShowSwaps]    = useState(false)
-  const [showPairings, setShowPairings] = useState(false)
+  const [servings,          setServings]          = useState(1)
+  const [stepTimers,        setStepTimers]        = useState({})
+  const [toast,             setToast]             = useState("")
+  const [showRadar,         setShowRadar]         = useState(false)
+  const [pdfMode,           setPdfMode]           = useState(false)
+  const [showMistakes,      setShowMistakes]      = useState(false)
+  const [showSwaps,         setShowSwaps]         = useState(false)
+  const [showPairings,      setShowPairings]      = useState(false)
+  const [checkedIngredients,setCheckedIngredients]= useState(new Set())
+  const [cookingMode,       setCookingMode]       = useState(false)
+  const [cookingStep,       setCookingStep]       = useState(0)
+  const [per100g,           setPer100g]           = useState(false)
+  const [compareMode,       setCompareMode]       = useState(false)
+  const [showRemix,         setShowRemix]         = useState(false)
+  const [deepDiveItem,      setDeepDiveItem]      = useState(null)   // ingredient key string
+  const [showNutrLabel,     setShowNutrLabel]     = useState(false)
+  const [recipeNote,        setRecipeNote]        = useState(() => {
+    try { return JSON.parse(localStorage.getItem("recipeNotes"))?.[recipe?.id] ?? "" } catch { return "" }
+  })
+  const [editingNote,       setEditingNote]       = useState(false)
 
   useEffect(() => {
     setStepTimers({})
     setServings(1)
     setShowRadar(false)
+    setCheckedIngredients(new Set())
+    setCookingMode(false)
+    setCookingStep(0)
+    setPer100g(false)
+    setCompareMode(false)
+    setDeepDiveItem(null)
+    setShowNutrLabel(false)
+    setEditingNote(false)
+    // Load saved note for this recipe
+    try {
+      const notes = JSON.parse(localStorage.getItem("recipeNotes")) ?? {}
+      setRecipeNote(notes[recipe?.id] ?? "")
+    } catch { setRecipeNote("") }
     Object.values(intervalRefs.current).forEach(clearInterval)
     intervalRefs.current = {}
   }, [recipe?.title])
@@ -729,12 +796,45 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
 
   const s = servings
 
+  // ── Total cook time (from generateSmartRecipe v2 or step sum) ──
+  const totalCookTime = recipe.totalCookTime ?? null
+
+  // ── RDA reference values for micronutrient % display ──────────
+  const MICRO_RDA = {
+    iron:      { rda: 15,   unit: "mg"  },
+    calcium:   { rda: 1000, unit: "mg"  },
+    vitC:      { rda: 90,   unit: "mg"  },
+    vitA:      { rda: 900,  unit: "mcg" },
+    vitB12:    { rda: 2.4,  unit: "mcg" },
+    vitD:      { rda: 600,  unit: "IU"  },
+    folate:    { rda: 400,  unit: "mcg" },
+    omega3:    { rda: 1.6,  unit: "g"   },
+    sodium:    { rda: 2300, unit: "mg", cap: true }, // lower is better
+    potassium: { rda: 4700, unit: "mg"  },
+    magnesium: { rda: 420,  unit: "mg"  },
+    zinc:      { rda: 11,   unit: "mg"  },
+  }
+  function rdaPct(key) {
+    const ref = MICRO_RDA[key]
+    if (!ref || !recipe.micros?.[key]) return null
+    const val = parseNum(recipe.micros[key]) * s
+    return Math.min(999, Math.round((val / ref.rda) * 100))
+  }
+
   // Scaled macros
   const scaledCal     = `${Math.round(parseNum(recipe.calories) * s)} kcal`
   const scaledProtein = `${Math.round(parseNum(recipe.protein)  * s)} g`
   const scaledCarbs   = `${Math.round(parseNum(recipe.carbs)    * s)} g`
   const scaledFats    = `${Math.round(parseNum(recipe.fats)     * s)} g`
   const scaledFibre   = recipe.fibre ? scaleMicro(recipe.fibre, s) : null
+
+  // ── Per-100g mode: divide totals by total weight to get density ──
+  const totalWeightG = recipe.ingredients?.reduce((sum, i) => sum + (i.qty ?? 0), 0) ?? 0
+  const per100Factor = per100g && totalWeightG > 0 ? (100 / totalWeightG) : null
+  const displayCal     = per100Factor ? `${Math.round(parseNum(recipe.calories) * per100Factor)} kcal` : scaledCal
+  const displayProtein = per100Factor ? `${(parseNum(recipe.protein)  * per100Factor).toFixed(1)} g`   : scaledProtein
+  const displayCarbs   = per100Factor ? `${(parseNum(recipe.carbs)    * per100Factor).toFixed(1)} g`   : scaledCarbs
+  const displayFats    = per100Factor ? `${(parseNum(recipe.fats)     * per100Factor).toFixed(1)} g`   : scaledFats
 
   const radarData = [
     { subject: "Protein",  value: Math.min(100, Math.round(parseNum(recipe.protein)  * s / 60   * 100)) },
@@ -749,6 +849,15 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
   const showToast = (msg) => {
     setToast(msg)
     setTimeout(() => setToast(""), 2500)
+  }
+
+  const saveNote = (text) => {
+    try {
+      const notes = JSON.parse(localStorage.getItem("recipeNotes")) ?? {}
+      notes[recipe.id] = text
+      localStorage.setItem("recipeNotes", JSON.stringify(notes))
+    } catch {}
+    setRecipeNote(text)
   }
 
   const downloadPDF = async () => {
@@ -839,23 +948,33 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
 
   // ── Full micros list (all 12) ───────────────────────────────
   const microsList = recipe.micros ? [
-    { label: "Iron",      value: scaleMicro(recipe.micros.iron,      s), color: "text-red-400",    bg: "bg-red-500/10    border-red-500/20"    },
-    { label: "Calcium",   value: scaleMicro(recipe.micros.calcium,   s), color: "text-sky-400",    bg: "bg-sky-500/10    border-sky-500/20"    },
-    { label: "Vit C",     value: scaleMicro(recipe.micros.vitC,      s), color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20" },
-    { label: "Vit A",     value: scaleMicro(recipe.micros.vitA,      s), color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20" },
-    { label: "Vit B12",   value: scaleMicro(recipe.micros.vitB12,    s), color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
-    { label: "Vit D",     value: scaleMicro(recipe.micros.vitD,      s), color: "text-amber-400",  bg: "bg-amber-500/10  border-amber-500/20"  },
-    { label: "Folate",    value: scaleMicro(recipe.micros.folate,    s), color: "text-lime-400",   bg: "bg-lime-500/10   border-lime-500/20"   },
-    { label: "Omega-3",   value: scaleMicro(recipe.micros.omega3,    s), color: "text-teal-400",   bg: "bg-teal-500/10   border-teal-500/20"   },
-    { label: "Sodium",    value: scaleMicro(recipe.micros.sodium,    s), color: "text-slate-400",  bg: "bg-slate-500/10  border-slate-500/20"  },
-    { label: "Potassium", value: scaleMicro(recipe.micros.potassium, s), color: "text-emerald-400",bg: "bg-emerald-500/10 border-emerald-500/20"},
-    { label: "Magnesium", value: scaleMicro(recipe.micros.magnesium, s), color: "text-cyan-400",   bg: "bg-cyan-500/10   border-cyan-500/20"   },
-    { label: "Zinc",      value: scaleMicro(recipe.micros.zinc,      s), color: "text-violet-400", bg: "bg-violet-500/10 border-violet-500/20" },
+    { key: "iron",      label: "Iron",      value: scaleMicro(recipe.micros.iron,      s), color: "text-red-400",    bg: "bg-red-500/10    border-red-500/20"    },
+    { key: "calcium",   label: "Calcium",   value: scaleMicro(recipe.micros.calcium,   s), color: "text-sky-400",    bg: "bg-sky-500/10    border-sky-500/20"    },
+    { key: "vitC",      label: "Vit C",     value: scaleMicro(recipe.micros.vitC,      s), color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/20" },
+    { key: "vitA",      label: "Vit A",     value: scaleMicro(recipe.micros.vitA,      s), color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20" },
+    { key: "vitB12",    label: "Vit B12",   value: scaleMicro(recipe.micros.vitB12,    s), color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
+    { key: "vitD",      label: "Vit D",     value: scaleMicro(recipe.micros.vitD,      s), color: "text-amber-400",  bg: "bg-amber-500/10  border-amber-500/20"  },
+    { key: "folate",    label: "Folate",    value: scaleMicro(recipe.micros.folate,    s), color: "text-lime-400",   bg: "bg-lime-500/10   border-lime-500/20"   },
+    { key: "omega3",    label: "Omega-3",   value: scaleMicro(recipe.micros.omega3,    s), color: "text-teal-400",   bg: "bg-teal-500/10   border-teal-500/20"   },
+    { key: "sodium",    label: "Sodium",    value: scaleMicro(recipe.micros.sodium,    s), color: "text-slate-400",  bg: "bg-slate-500/10  border-slate-500/20"  },
+    { key: "potassium", label: "Potassium", value: scaleMicro(recipe.micros.potassium, s), color: "text-emerald-400",bg: "bg-emerald-500/10 border-emerald-500/20"},
+    { key: "magnesium", label: "Magnesium", value: scaleMicro(recipe.micros.magnesium, s), color: "text-cyan-400",   bg: "bg-cyan-500/10   border-cyan-500/20"   },
+    { key: "zinc",      label: "Zinc",      value: scaleMicro(recipe.micros.zinc,      s), color: "text-violet-400", bg: "bg-violet-500/10 border-violet-500/20" },
   ] : []
 
   // ─────────────────────────────────────────────────────────────
   return (
     <>
+      {/* ── Cooking Mode overlay ──────────────────────────── */}
+      {cookingMode && (
+        <CookingMode
+          recipe={recipe}
+          step={cookingStep}
+          setStep={setCookingStep}
+          onClose={() => setCookingMode(false)}
+        />
+      )}
+
       {/* ── Toast ──────────────────────────────────────────── */}
       <AnimatePresence>
         {toast && (
@@ -934,10 +1053,10 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
             </div>
           )}
 
-          {/* Prep time */}
+          {/* Prep time — note: recipe.prepTime already includes a clock emoji from getPrepTimeLabel */}
           {recipe.prepTime && (
             <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm font-semibold bg-white/5 border-white/15 text-gray-300">
-              ⏱ {recipe.prepTime}
+              {recipe.prepTime}
             </div>
           )}
         </div>
@@ -963,7 +1082,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
                 <span key={i} className="text-sm bg-red-500/15 border border-red-500/30 text-red-300 px-3 py-1 rounded-full font-medium">{a}</span>
               ))}
             </div>
-            <p className="w-full text-sm text-red-400/60 mt-1">Always verify for personal dietary requirements. Values are indicative.</p>
+            <p className="w-full text-sm font-semibold text-red-400/80 mt-2 leading-relaxed">⚠️ Always verify for personal dietary requirements. Values are indicative.</p>
           </div>
         )}
 
@@ -977,12 +1096,166 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
           ].map(({ label, color, fn }) => (
             <ActionButton key={label} color={color} onClick={fn}>{label}</ActionButton>
           ))}
+          <motion.button whileTap={{ scale: 0.92 }}
+            onClick={() => { setCookingMode(true); setCookingStep(0) }}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-400 hover:to-pink-400 text-white text-sm font-bold transition-all shadow-lg shadow-orange-500/20">
+            👨‍🍳 Start Cooking
+          </motion.button>
+          <motion.button whileTap={{ scale: 0.95 }}
+            onClick={() => setCompareMode(m => !m)}
+            className={`px-4 py-2.5 rounded-xl text-sm font-bold border transition-all
+              ${compareMode
+                ? "bg-purple-500/20 border-purple-500/40 text-purple-300"
+                : "bg-white/5 border-white/15 text-gray-300 hover:text-white hover:bg-white/10"}`}>
+            ⚖️ Compare
+          </motion.button>
+          <motion.button whileTap={{ scale: 0.95 }}
+            onClick={() => setShowNutrLabel(n => !n)}
+            className={`px-4 py-2.5 rounded-xl text-sm font-bold border transition-all
+              ${showNutrLabel
+                ? "bg-teal-500/20 border-teal-500/40 text-teal-300"
+                : "bg-white/5 border-white/15 text-gray-300 hover:text-white hover:bg-white/10"}`}>
+            🏷 Label
+          </motion.button>
           <a href={`https://wa.me/?text=${encodeURIComponent(`${recipe.title} (${s} serving${s > 1 ? "s" : ""})\nCal: ${scaledCal} | Protein: ${scaledProtein}\n\n${recipe.description}`)}`}
             target="_blank" rel="noreferrer"
             className="px-4 py-2 rounded-xl bg-[#25D366] hover:bg-[#1ebe5d] text-white text-sm font-medium transition-colors">
             💬 WhatsApp
           </a>
+          {onRemix && (
+            <motion.button whileTap={{ scale: 0.95 }}
+              onClick={() => setShowRemix(r => !r)}
+              className={`px-4 py-2.5 rounded-xl text-sm font-bold border transition-all
+                ${showRemix
+                  ? "bg-green-500/20 border-green-500/40 text-green-300"
+                  : "bg-white/5 border-white/15 text-gray-300 hover:text-white hover:bg-white/10"}`}>
+              🔄 Remix
+            </motion.button>
+          )}
         </div>
+
+        {/* ── Remix panel ────────────────────────────────────── */}
+        <AnimatePresence>
+          {showRemix && onRemix && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }}
+              className="overflow-hidden mb-8">
+              <div className="bg-white/3 border border-white/10 rounded-2xl p-5">
+                <p className="text-sm font-bold text-white mb-3">🔄 Remix This Recipe</p>
+                <p className="text-xs text-gray-500 mb-4">Same ingredients, different constraints</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {[
+                    { label: "🥩 High Protein",  opts: { goal: "muscle_gain" } },
+                    { label: "⚖️ Weight Loss",   opts: { goal: "weight_loss" } },
+                    { label: "🌱 Make Vegan",     opts: { dietary: "vegan" } },
+                    { label: "🧀 Vegetarian",     opts: { dietary: "vegetarian" } },
+                    { label: "💰 Budget Cut",     opts: { budget: 80 } },
+                    { label: "🎯 Balanced",       opts: { goal: "balanced" } },
+                  ].map(({ label, opts }) => (
+                    <button key={label}
+                      onClick={() => { onRemix(opts); setShowRemix(false) }}
+                      className="px-3 py-2.5 rounded-xl text-sm font-semibold bg-white/5 border border-white/10 text-gray-300 hover:bg-green-500/10 hover:border-green-500/25 hover:text-green-300 transition-all text-left">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Your daily coverage ────────────────────────────── */}
+        {userProfile && (() => {
+          try {
+            const { weight, height, age, sex, activity, goal: g } = userProfile
+            if (!weight || !height || !age) return null
+            const mult = { sedentary:1.20, light:1.375, moderate:1.55, active:1.725, extra:1.90 }[activity] ?? 1.55
+            const bmr  = sex === "female" ? 10*weight+6.25*height-5*age-161 : 10*weight+6.25*height-5*age+5
+            const tdee = Math.round(bmr * mult)
+            const surp = { weight_loss:-500, balanced:0, muscle_gain:300, performance:200 }[g] ?? 0
+            const tCal = Math.max(1200, tdee + surp)
+            const sp   = { weight_loss:{p:0.35,c:0.40,f:0.25}, balanced:{p:0.25,c:0.50,f:0.25}, muscle_gain:{p:0.35,c:0.45,f:0.20}, performance:{p:0.25,c:0.55,f:0.20} }[g] ?? {p:0.25,c:0.50,f:0.25}
+            const gm   = { protein: Math.round(tCal*sp.p/4), carbs: Math.round(tCal*sp.c/4), fats: Math.round(tCal*sp.f/9) }
+            const pNum = v => parseFloat(String(v??"0").replace(/[^0-9.]/g,""))||0
+            const rCal = pNum(recipe.calories); const pct = Math.min(100,Math.round((rCal/tCal)*100))
+            const rP   = pNum(recipe.protein);  const rC = pNum(recipe.carbs); const rF = pNum(recipe.fats)
+            return (
+              <div className="mb-8 bg-gradient-to-br from-purple-500/8 to-blue-500/8 border border-purple-500/20 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-white">
+                    👤 Your Daily Coverage
+                    {userProfile.name && <span className="text-gray-400 font-normal ml-1">— {userProfile.name}</span>}
+                  </p>
+                  <span className={`text-sm font-bold ${pct > 50 ? "text-orange-400" : "text-purple-400"}`}>
+                    {pct}% of {tCal} kcal
+                  </span>
+                </div>
+                <div className="h-2 bg-white/8 rounded-full overflow-hidden mb-3">
+                  <div className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all duration-700"
+                    style={{ width: `${pct}%` }} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  {[
+                    { label: "Protein", val: rP, target: gm.protein, color: "text-blue-400"   },
+                    { label: "Carbs",   val: rC, target: gm.carbs,   color: "text-green-400"  },
+                    { label: "Fats",    val: rF, target: gm.fats,    color: "text-purple-400" },
+                  ].map(({ label, val, target, color }) => (
+                    <div key={label}>
+                      <p className={`text-base font-bold ${color}`}>{Math.round(val)}g</p>
+                      <p className="text-xs text-gray-600">{label}</p>
+                      <p className="text-xs text-gray-700">{Math.min(100,Math.round((val/Math.max(target,1))*100))}% of goal</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          } catch { return null }
+        })()}
+
+        {/* ── Nutrition Label (FDA-style) ───────────────────── */}
+        <AnimatePresence>
+          {showNutrLabel && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }}
+              className="overflow-hidden mb-8">
+              <div className="bg-white text-black rounded-2xl p-5 max-w-xs font-sans shadow-2xl">
+                <p className="text-2xl font-black border-b-8 border-black pb-1 mb-1">Nutrition Facts</p>
+                <p className="text-xs border-b border-black pb-1 mb-1">{s} serving{s > 1 ? "s" : ""} per recipe</p>
+                <div className="flex justify-between items-end border-b-8 border-black pb-1 mb-1">
+                  <div>
+                    <p className="text-xs font-bold">Serving size</p>
+                    <p className="text-xs">{s} plate</p>
+                  </div>
+                </div>
+                <div className="flex justify-between items-end border-b-4 border-black pb-0.5">
+                  <p className="text-sm font-black">Calories</p>
+                  <p className="text-3xl font-black">{Math.round(parseNum(recipe.calories) * s)}</p>
+                </div>
+                <p className="text-right text-xs border-b border-black pb-1 mb-1">% Daily Value*</p>
+                {[
+                  { label: "Total Fat",         val: Math.round(parseNum(recipe.fats)     * s), unit: "g",  dv: 78,   bold: true  },
+                  { label: "Total Carbohydrate", val: Math.round(parseNum(recipe.carbs)    * s), unit: "g",  dv: 275,  bold: true  },
+                  { label: "Dietary Fiber",      val: Math.round(parseFloat(recipe.fibre)  * s), unit: "g",  dv: 28,   bold: false },
+                  { label: "Protein",            val: Math.round(parseNum(recipe.protein)  * s), unit: "g",  dv: 50,   bold: true  },
+                  { label: "Sodium",             val: Math.round(parseFloat(recipe.micros?.sodium    ?? 0) * s), unit: "mg", dv: 2300, bold: false },
+                  { label: "Iron",               val: Math.round(parseFloat(recipe.micros?.iron      ?? 0) * s * 10) / 10, unit: "mg", dv: 18, bold: false },
+                  { label: "Calcium",            val: Math.round(parseFloat(recipe.micros?.calcium   ?? 0) * s), unit: "mg", dv: 1300, bold: false },
+                  { label: "Vit C",              val: Math.round(parseFloat(recipe.micros?.vitC      ?? 0) * s), unit: "mg", dv: 90,   bold: false },
+                  { label: "Vit D",              val: Math.round(parseFloat(recipe.micros?.vitD      ?? 0) * s), unit: "IU", dv: 800,  bold: false },
+                ].map(({ label, val, unit, dv, bold }) => {
+                  const pct = Math.min(999, Math.round((val / dv) * 100))
+                  return (
+                    <div key={label} className={`flex justify-between py-0.5 border-b border-gray-200 ${bold ? "font-bold" : "pl-4"}`}>
+                      <span className="text-xs">{label} <span className={bold ? "font-normal" : ""}>{val}{unit}</span></span>
+                      <span className="text-xs font-bold">{pct}%</span>
+                    </div>
+                  )
+                })}
+                <p className="text-xs mt-2 text-gray-600">* % Daily Values based on 2,000 kcal diet</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* ── Description ──────────────────────────────────── */}
         <p className="text-gray-300 mb-6 leading-relaxed text-base">{recipe.description}</p>
@@ -1023,26 +1296,57 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
         </div>
 
         {/* ── Macro cards ──────────────────────────────────── */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex gap-1.5">
+            <button onClick={() => setPer100g(false)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${!per100g ? "bg-orange-500 text-white" : "bg-white/5 text-gray-500 hover:text-gray-300"}`}>
+              Per serving
+            </button>
+            <button onClick={() => setPer100g(true)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${per100g ? "bg-orange-500 text-white" : "bg-white/5 text-gray-500 hover:text-gray-300"}`}>
+              Per 100g
+            </button>
+          </div>
+          {per100g && totalWeightG > 0 && (
+            <span className="text-xs text-gray-600">based on {Math.round(totalWeightG)}g total weight</span>
+          )}
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-4">
-          <InfoCard label="Calories"  value={scaledCal}     accent="orange" />
-          <InfoCard label="Protein"   value={scaledProtein} accent="blue"   />
-          <InfoCard label="Carbs"     value={scaledCarbs}   accent="purple" />
-          <InfoCard label="Fats"      value={scaledFats}    accent="pink"   />
-          {scaledFibre
-            ? <InfoCard label="Fibre" value={scaledFibre}   accent="lime"   />
-            : <InfoCard label="Prep"  value={recipe.prepTime ?? "—"} accent="gray" />
-          }
+          <InfoCard label="Calories"  value={displayCal}                             accent="orange" />
+          <InfoCard label="Protein"   value={displayProtein}                         accent="blue"   />
+          <InfoCard label="Carbs"     value={displayCarbs}                           accent="purple" />
+          <InfoCard label="Fats"      value={displayFats}                            accent="pink"   />
+          <InfoCard label="Cook Time" value={totalCookTime ?? (recipe.prepTime?.replace(/[^\w\s]/gu, "").trim() ?? "—")} accent="teal" />
         </div>
 
         {/* ── Extended micronutrient grid — all 12 fields ──── */}
         {microsList.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-3">
-            {microsList.map(({ label, value, color, bg }) => (
-              <div key={label} className={`flex items-center gap-2 px-3 py-2 rounded-full border text-sm font-medium ${bg} ${color}`}>
-                <span className="opacity-70">{label}</span>
-                <span className="font-bold">{value}</span>
-              </div>
-            ))}
+            {microsList.map(({ key, label, value, color, bg }) => {
+              const pct = rdaPct(key)
+              const isCap = key === "sodium" // sodium: lower is better
+              return (
+                <div key={label} className={`flex flex-col px-3 py-2 rounded-xl border text-sm font-medium ${bg} ${color} min-w-[80px]`}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-sm font-semibold opacity-80">{label}</span>
+                    {pct !== null && (
+                      <span className={`text-sm font-bold tabular-nums ${isCap ? (pct > 100 ? "text-red-400" : "text-green-400") : ""}`}>
+                        {pct}%
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-bold text-xs">{value}</span>
+                  {pct !== null && (
+                    <div className="w-full h-1 mt-1.5 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${isCap ? (pct > 100 ? "bg-red-400" : "bg-green-400") : color.replace("text-","bg-")}`}
+                        style={{ width: `${Math.min(100, pct)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -1050,9 +1354,14 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
         <VitaminFlags flags={recipe.vitaminFlags} />
 
         {/* ── Nutritional disclaimer ───────────────────────── */}
-        <p className="text-sm text-gray-600 italic mb-6">
-          ⚕️ All nutritional values are estimates based on standard food composition data. Actual values vary by ingredient quality, preparation method and portion size.
-        </p>
+        <div className="mb-6 px-4 py-3 bg-white/3 border border-white/8 rounded-xl">
+          <p className="text-sm font-semibold text-gray-300 leading-relaxed">
+            ⚕️ All nutritional values are estimates based on standard food composition data.
+          </p>
+          <p className="text-sm text-gray-400 mt-1 leading-relaxed font-medium">
+            Actual values vary by ingredient quality, preparation method and portion size.
+          </p>
+        </div>
 
         {/* ── Radar chart ──────────────────────────────────── */}
         <div className="no-export mb-4">
@@ -1081,6 +1390,11 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
           </AnimatePresence>
         </div>
 
+        {/* ── Compare panel ───────────────────────────────── */}
+        {compareMode && (
+          <ComparePanel recipe={recipe} onClose={() => setCompareMode(false)} />
+        )}
+
         {/* ── Health Score Breakdown ────────────────────────── */}
         <HealthScorePanel recipe={recipe} tier={tier} />
 
@@ -1101,14 +1415,152 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
           </h3>
           <div className="grid sm:grid-cols-2 gap-2">
             {recipe.ingredients.map((ing, i) => (
-              <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+              <motion.div key={i}
+                initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.035 }}
-                className="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl px-4 py-3">
-                <span className="text-base text-gray-200">{capitalize(ing.item)}</span>
-                <span className="text-orange-400 text-base font-mono font-semibold">{Math.round(ing.qty * s)}g</span>
+                onClick={() => setCheckedIngredients(prev => {
+                  const next = new Set(prev)
+                  next.has(ing.item) ? next.delete(ing.item) : next.add(ing.item)
+                  return next
+                })}
+                className={`flex items-center justify-between rounded-xl px-4 py-3 cursor-pointer select-none transition-all duration-200
+                  ${checkedIngredients.has(ing.item)
+                    ? "bg-green-500/8 border border-green-500/20 opacity-60"
+                    : "bg-white/5 border border-white/10 hover:bg-white/8"}`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all
+                    ${checkedIngredients.has(ing.item) ? "bg-green-500 border-green-500" : "border-white/30"}`}>
+                    {checkedIngredients.has(ing.item) && <span className="text-white text-xs font-bold">✓</span>}
+                  </div>
+                  <span className={`text-base transition-colors ${checkedIngredients.has(ing.item) ? "text-green-400 line-through" : "text-gray-200"}`}>
+                    {capitalize(ing.item)}
+                    {ing.userSpecified && <span className="ml-1.5 text-xs text-gray-600" title="Your quantity">★</span>}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-base font-mono font-semibold ${checkedIngredients.has(ing.item) ? "text-green-400" : "text-orange-400"}`}>
+                    {Math.round(ing.qty * s)}g
+                  </span>
+                  {NUTRITION_DB[ing.item] && (
+                    <button onClick={e => { e.stopPropagation(); setDeepDiveItem(deepDiveItem === ing.item ? null : ing.item) }}
+                      className={`text-xs w-5 h-5 rounded-full flex items-center justify-center transition-colors
+                        ${deepDiveItem === ing.item ? "bg-orange-500 text-white" : "bg-white/10 text-gray-500 hover:bg-orange-500/20 hover:text-orange-400"}`}
+                      title="Nutrition details">
+                      i
+                    </button>
+                  )}
+                </div>
               </motion.div>
             ))}
           </div>
+          {checkedIngredients.size > 0 && (
+            <div className="no-export mt-3 flex items-center justify-between">
+              <span className="text-sm text-green-400">{checkedIngredients.size}/{recipe.ingredients.length} added to pan ✓</span>
+              <button onClick={() => setCheckedIngredients(new Set())}
+                className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Reset</button>
+            </div>
+          )}
+          <p className="text-xs text-gray-700 mt-2">💡 Tap any ingredient for nutrition details</p>
+        </div>
+
+        {/* ── Ingredient deep-dive panel ────────────────────── */}
+        <AnimatePresence>
+          {deepDiveItem && (() => {
+            const n = NUTRITION_DB[deepDiveItem]
+            if (!n) return null
+            const rows = [
+              { label: "Calories",   val: `${n.cal} kcal`,           color: "text-orange-400" },
+              { label: "Protein",    val: `${n.p} g`,                color: "text-blue-400"   },
+              { label: "Carbs",      val: `${n.c} g`,                color: "text-green-400"  },
+              { label: "Fats",       val: `${n.f} g`,                color: "text-yellow-400" },
+              { label: "Fibre",      val: `${n.fibre ?? 0} g`,       color: "text-lime-400"   },
+              { label: "Omega-3",    val: `${n.omega3 ?? 0} g`,      color: "text-cyan-400"   },
+              { label: "Iron",       val: `${n.iron ?? 0} mg`,       color: "text-red-400"    },
+              { label: "Calcium",    val: `${n.calcium ?? 0} mg`,    color: "text-gray-300"   },
+              { label: "Vit C",      val: `${n.vitC ?? 0} mg`,       color: "text-yellow-300" },
+              { label: "Vit B12",    val: `${n.vitB12 ?? 0} mcg`,    color: "text-purple-400" },
+              { label: "Vit D",      val: `${n.vitD ?? 0} IU`,       color: "text-amber-400"  },
+              { label: "Potassium",  val: `${n.potassium ?? 0} mg`,  color: "text-pink-400"   },
+              { label: "Magnesium",  val: `${n.magnesium ?? 0} mg`,  color: "text-teal-400"   },
+              { label: "Zinc",       val: `${n.zinc ?? 0} mg`,       color: "text-indigo-400" },
+              { label: "Sodium",     val: `${n.sodium ?? 0} mg`,     color: "text-gray-400"   },
+              { label: "GI",         val: n.gi > 0 ? `${n.gi} (${n.gi < 55 ? "Low" : n.gi < 70 ? "Med" : "High"})` : "—", color: "text-gray-300" },
+            ]
+            const inflamm = n.inflam < 0 ? `🟢 Anti-inflammatory (${n.inflam})` : n.inflam > 0 ? `🔴 Pro-inflammatory (+${n.inflam})` : "⚪ Neutral"
+            return (
+              <motion.div key={deepDiveItem}
+                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 12 }} transition={{ duration: 0.25 }}
+                className="mb-8 bg-white/3 border border-white/12 rounded-2xl overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+                  <div>
+                    <p className="text-base font-bold text-white capitalize">{deepDiveItem.replace(/_/g," ")}</p>
+                    <p className="text-xs text-gray-500">Nutrition per 100g · {n.dietaryGroup}</p>
+                  </div>
+                  <button onClick={() => setDeepDiveItem(null)} className="text-gray-600 hover:text-gray-300 transition-colors">✕</button>
+                </div>
+                {/* Tags */}
+                {n.tags?.length > 0 && (
+                  <div className="px-5 pt-3 flex flex-wrap gap-1.5">
+                    {n.tags.map(t => (
+                      <span key={t} className="text-xs bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full capitalize">
+                        {t.replace(/-/g," ")}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Inflammatory */}
+                <p className="px-5 pt-3 text-xs font-semibold">{inflamm}</p>
+                {/* Macro + micro grid */}
+                <div className="grid grid-cols-4 gap-2 p-5">
+                  {rows.map(({ label, val, color }) => (
+                    <div key={label} className="bg-white/4 rounded-xl p-2.5 text-center">
+                      <p className={`text-sm font-bold ${color}`}>{val}</p>
+                      <p className="text-xs text-gray-600 mt-0.5">{label}</p>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )
+          })()}
+        </AnimatePresence>
+
+        {/* ── Recipe notes ───────────────────────────────────── */}
+        <div className="no-export mb-8">
+          {editingNote ? (
+            <div className="bg-white/3 border border-orange-500/30 rounded-2xl p-4">
+              <p className="text-xs font-semibold text-orange-400 mb-2">📝 Your Notes</p>
+              <textarea
+                autoFocus
+                value={recipeNote}
+                onChange={e => setRecipeNote(e.target.value)}
+                onBlur={() => { saveNote(recipeNote); setEditingNote(false) }}
+                placeholder="How did it turn out? Any tweaks for next time…"
+                rows={3}
+                className="w-full bg-transparent text-sm text-gray-300 placeholder-gray-700 outline-none resize-none"
+              />
+              <div className="flex justify-end mt-2">
+                <button onClick={() => { saveNote(recipeNote); setEditingNote(false) }}
+                  className="text-xs font-bold text-orange-400 hover:text-orange-300 transition-colors">
+                  Save Note ↵
+                </button>
+              </div>
+            </div>
+          ) : recipeNote ? (
+            <div onClick={() => setEditingNote(true)}
+              className="bg-white/3 border border-white/8 rounded-2xl p-4 cursor-pointer hover:border-white/15 transition-colors group">
+              <p className="text-xs font-semibold text-gray-500 mb-1.5 flex items-center justify-between">
+                📝 Your Notes
+                <span className="text-gray-700 group-hover:text-gray-500 transition-colors text-xs">click to edit</span>
+              </p>
+              <p className="text-sm text-gray-400 leading-relaxed">{recipeNote}</p>
+            </div>
+          ) : (
+            <button onClick={() => setEditingNote(true)}
+              className="w-full py-3 border border-dashed border-white/10 rounded-2xl text-sm text-gray-700 hover:text-gray-500 hover:border-white/20 transition-colors">
+              📝 Add a note about this recipe
+            </button>
+          )}
         </div>
 
         {/* ── Cooking tips — NEW ───────────────────────────── */}
@@ -1131,7 +1583,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
         {/* ── Steps with timers ────────────────────────────── */}
         <div>
           <h3 className="text-lg font-semibold mb-1 text-purple-400">👨‍🍳 Instructions</h3>
-          <p className="no-export text-sm text-gray-500 mb-5">
+          <p className="no-export text-base font-medium text-gray-400 mb-5">
             Tap ⏱ to start a countdown. A chime sounds when the step completes.
           </p>
           <motion.ol variants={stepListVariants} initial="hidden" animate="visible" className="space-y-2.5">
@@ -1189,7 +1641,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
                       </span>
                     ))}
                   </div>
-                  <p className="text-sm text-gray-600 mt-3">Cuisine and goal aware — selected to complement this meal's macro profile.</p>
+                  <p className="text-sm font-semibold text-gray-400 mt-3">Cuisine and goal aware — selected to complement this meal's macro profile.</p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -1219,16 +1671,16 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
                       return (
                         <div key={i} className="p-4 bg-amber-500/5 border border-amber-500/15 rounded-2xl">
                           <div className="flex items-center gap-3 mb-2 flex-wrap">
-                            <span className="text-sm font-bold text-amber-300">{fromItem}</span>
-                            <span className="text-gray-500 text-base">→</span>
-                            <span className="text-sm text-gray-200 font-semibold">{toItem}</span>
+                            <span className="text-base font-bold text-amber-300">{fromItem}</span>
+                            <span className="text-gray-400 text-lg font-bold">→</span>
+                            <span className="text-base text-gray-100 font-bold">{toItem}</span>
                             <span className="ml-auto text-sm font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full shrink-0">
                               saves {saving}
                             </span>
                           </div>
-                          {note && <p className="text-sm text-gray-400 leading-relaxed">{note}</p>}
+                          {note && <p className="text-sm font-medium text-gray-300 leading-relaxed mt-1">{note}</p>}
                           {nutritionNote && (
-                            <p className="text-xs text-gray-500 mt-1.5 italic">{nutritionNote}</p>
+                            <p className="text-sm text-gray-400 mt-1.5 italic font-medium leading-relaxed">{nutritionNote}</p>
                           )}
                         </div>
                       )
@@ -1276,6 +1728,264 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
 }
 
 
+
+// ═══════════════════════════════════════════════════════════════
+//  COOKING MODE — full-screen step-by-step overlay
+//  One step at a time. Giant tap targets. Auto-timer. Beep on done.
+// ═══════════════════════════════════════════════════════════════
+
+function CookingMode({ recipe, step, setStep, onClose }) {
+  const steps       = recipe.steps ?? []
+  const totalSteps  = steps.length
+  const currentStep = steps[step]
+  const stepText    = getStepText(currentStep)
+  const progress    = Math.round(((step + 1) / totalSteps) * 100)
+
+  const [timerSec,  setTimerSec]  = useState(null)   // null = not started
+  const [running,   setRunning]   = useState(false)
+  const [done,      setDone]      = useState(false)
+  const intervalRef               = useRef(null)
+
+  // Reset timer when step changes
+  useEffect(() => {
+    clearInterval(intervalRef.current)
+    setTimerSec(null)
+    setRunning(false)
+    setDone(false)
+  }, [step])
+
+  useEffect(() => () => clearInterval(intervalRef.current), [])
+
+  const startTimer = () => {
+    const dur = currentStep?.durationSeconds ?? getStepDuration(currentStep)
+    setTimerSec(dur)
+    setRunning(true)
+    setDone(false)
+    clearInterval(intervalRef.current)
+    intervalRef.current = setInterval(() => {
+      setTimerSec(prev => {
+        if (prev <= 1) {
+          clearInterval(intervalRef.current)
+          setRunning(false)
+          setDone(true)
+          playTimerBeep()
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
+  const pauseTimer = () => {
+    clearInterval(intervalRef.current)
+    setRunning(false)
+  }
+
+  const nextStep = () => {
+    if (step < totalSteps - 1) {
+      setStep(s => s + 1)
+    } else {
+      onClose()
+    }
+  }
+
+  const prevStep = () => {
+    if (step > 0) setStep(s => s - 1)
+  }
+
+  // Parse step label / body
+  const dashIdx  = stepText.indexOf("—")
+  const label    = dashIdx > -1 ? stepText.slice(0, dashIdx).trim() : ""
+  const body     = dashIdx > -1 ? stepText.slice(dashIdx + 1).trim() : stepText
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 bg-gray-950 flex flex-col"
+        style={{ touchAction: "manipulation" }}
+      >
+        {/* ── Header ─────────────────────────────────────── */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/8">
+          <div className="flex-1">
+            <p className="text-xs text-gray-500 font-semibold uppercase tracking-widest mb-0.5">Cooking Mode</p>
+            <p className="text-sm text-white font-semibold truncate max-w-[220px]">{recipe.title}</p>
+          </div>
+          <button onClick={onClose}
+            className="w-10 h-10 rounded-full bg-white/8 hover:bg-white/15 text-gray-400 hover:text-white transition-all flex items-center justify-center text-lg">
+            ✕
+          </button>
+        </div>
+
+        {/* ── Progress bar ───────────────────────────────── */}
+        <div className="h-1 bg-white/8 w-full">
+          <motion.div
+            className="h-full bg-gradient-to-r from-orange-500 to-pink-500"
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
+          />
+        </div>
+        <p className="text-center text-xs text-gray-600 py-2">
+          Step {step + 1} of {totalSteps}
+        </p>
+
+        {/* ── Step content ───────────────────────────────── */}
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-4 overflow-y-auto">
+          {label && (
+            <motion.p
+              key={`label-${step}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-xs font-bold tracking-widest text-orange-400 uppercase mb-4 text-center"
+            >
+              {label}
+            </motion.p>
+          )}
+          <motion.p
+            key={`body-${step}`}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35 }}
+            className="text-xl md:text-2xl text-white text-center leading-relaxed font-medium max-w-xl"
+          >
+            {body}
+          </motion.p>
+
+          {/* ── Timer area ─────────────────────────────── */}
+          <div className="mt-10 flex flex-col items-center gap-4">
+            {timerSec === null ? (
+              <motion.button
+                whileTap={{ scale: 0.94 }}
+                onClick={startTimer}
+                className="px-8 py-4 rounded-2xl bg-orange-500/15 border border-orange-500/30 text-orange-400 font-semibold text-lg hover:bg-orange-500/25 transition-all"
+              >
+                ⏱ Start Timer ({formatTime(currentStep?.durationSeconds ?? getStepDuration(currentStep))})
+              </motion.button>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                {/* Big countdown */}
+                <div className={`text-6xl font-mono font-bold tabular-nums transition-colors ${done ? "text-green-400" : running ? "text-orange-400" : "text-white"}`}>
+                  {done ? "✓" : formatTime(timerSec)}
+                </div>
+                {done ? (
+                  <p className="text-green-400 font-semibold text-lg animate-pulse">Step complete!</p>
+                ) : (
+                  <motion.button
+                    whileTap={{ scale: 0.94 }}
+                    onClick={running ? pauseTimer : startTimer}
+                    className={`px-6 py-3 rounded-xl font-semibold text-base transition-all ${
+                      running
+                        ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                        : "bg-white/10 text-gray-300 border border-white/15"
+                    }`}
+                  >
+                    {running ? "⏸ Pause" : "▶ Resume"}
+                  </motion.button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Navigation ─────────────────────────────────── */}
+        <div className="px-5 pb-8 pt-4 border-t border-white/8 grid grid-cols-3 gap-3">
+          <motion.button
+            whileTap={{ scale: 0.94 }}
+            onClick={prevStep}
+            disabled={step === 0}
+            className="py-4 rounded-2xl bg-white/5 border border-white/10 text-gray-400 font-semibold text-base disabled:opacity-30 hover:bg-white/10 transition-all"
+          >
+            ← Prev
+          </motion.button>
+          <div className="flex items-center justify-center">
+            <p className="text-gray-600 text-sm">{step + 1}/{totalSteps}</p>
+          </div>
+          <motion.button
+            whileTap={{ scale: 0.94 }}
+            onClick={nextStep}
+            className={`py-4 rounded-2xl font-bold text-base transition-all ${
+              step === totalSteps - 1
+                ? "bg-green-500/20 border border-green-500/30 text-green-400 hover:bg-green-500/30"
+                : "bg-gradient-to-r from-orange-500 to-pink-500 text-white hover:from-orange-400 hover:to-pink-400"
+            }`}
+          >
+            {step === totalSteps - 1 ? "Finish 🎉" : "Next →"}
+          </motion.button>
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  )
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  COMPARE PANEL — side-by-side macro comparison
+// ═══════════════════════════════════════════════════════════════
+function ComparePanel({ recipe, onClose }) {
+  const [compareWith, setCompareWith] = React.useState(null)
+  const [candidates,  setCandidates]  = React.useState([])
+  React.useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("savedRecipes") || "[]")
+      setCandidates(saved.filter(r => r.id !== recipe.id && r.title !== recipe.title).slice(0, 10))
+    } catch { setCandidates([]) }
+  }, [recipe.id])
+
+  const numOf = v => parseFloat(String(v ?? "0").replace(/[^0-9.]/g, "")) || 0
+  const ROWS = [
+    { label: "Calories", a: recipe.calories, b: compareWith?.calories, higher: false, unit: "kcal" },
+    { label: "Protein",  a: recipe.protein,  b: compareWith?.protein,  higher: true,  unit: "g"    },
+    { label: "Carbs",    a: recipe.carbs,    b: compareWith?.carbs,    higher: false, unit: "g"    },
+    { label: "Fats",     a: recipe.fats,     b: compareWith?.fats,     higher: false, unit: "g"    },
+  ]
+
+  return (
+    <div className="mb-8 p-5 bg-white/3 border border-white/10 rounded-2xl">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-base font-semibold text-purple-400">⚖️ Compare Recipes</h3>
+        <button onClick={onClose} className="text-gray-600 hover:text-gray-400 text-sm">✕ close</button>
+      </div>
+      {!compareWith ? (
+        <div>
+          <p className="text-sm text-gray-500 mb-3">Pick a recipe to compare:</p>
+          {candidates.length === 0
+            ? <p className="text-sm text-gray-600 italic">Generate more recipes — they appear here automatically.</p>
+            : candidates.map((c, i) => (
+                <button key={i} onClick={() => setCompareWith(c)}
+                  className="w-full text-left px-4 py-2.5 mb-1.5 rounded-xl bg-white/5 border border-white/8 hover:bg-white/10 text-sm text-gray-300 flex items-center justify-between">
+                  <span>{c.title}</span>
+                  <span className="text-xs text-gray-600">{c.calories} · {c.protein} P</span>
+                </button>
+              ))
+          }
+        </div>
+      ) : (
+        <div>
+          <div className="grid grid-cols-3 gap-2 mb-3 text-xs text-gray-500 uppercase tracking-wider px-1">
+            <span>Nutrient</span>
+            <span className="text-center text-orange-400 truncate">{recipe.title?.slice(0,16)}</span>
+            <span className="text-center text-purple-400 truncate">{compareWith.title?.slice(0,16)}</span>
+          </div>
+          {ROWS.map(({ label, a, b, higher, unit }) => {
+            const av = numOf(a), bv = numOf(b)
+            const aBetter = higher ? av >= bv : av <= bv
+            return (
+              <div key={label} className="grid grid-cols-3 gap-2 py-2 border-b border-white/5 last:border-0 items-center">
+                <span className="text-sm text-gray-400">{label}</span>
+                <span className={`text-center text-sm font-bold tabular-nums ${aBetter ? "text-green-400" : "text-gray-300"}`}>{av.toFixed(label==="Calories"?0:1)} {unit}</span>
+                <span className={`text-center text-sm font-bold tabular-nums ${!aBetter ? "text-green-400" : "text-gray-300"}`}>{bv.toFixed(label==="Calories"?0:1)} {unit}</span>
+              </div>
+            )
+          })}
+          <button onClick={() => setCompareWith(null)} className="mt-3 text-xs text-gray-600 hover:text-gray-400">← Pick different</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  REUSABLE ATOMS
 // ═══════════════════════════════════════════════════════════════
@@ -1285,6 +1995,7 @@ function InfoCard({ label, value, accent }) {
     orange: "text-orange-400", blue:   "text-blue-400",
     purple: "text-purple-400", pink:   "text-pink-400",
     lime:   "text-lime-400",   gray:   "text-gray-300",
+    teal:   "text-teal-400",
   }
   return (
     <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-center">
@@ -1308,3 +2019,5 @@ function ActionButton({ onClick, color, children }) {
     </motion.button>
   )
 }
+
+// ── RecipeErrorBoundary is exported directly on its class declaration (line 18) ──

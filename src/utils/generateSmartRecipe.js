@@ -406,8 +406,10 @@ export function generateSmartRecipe({
   location     = "India",
   skill        = "beginner",
   servings     = 1,
+  quantities   = {},   // user-specified qtys from normalizeInput v2
 }) {
   if (!ingredients || ingredients.length === 0) return null
+  try {
 
   // ── Step 1: Merge signals with explicit params ───────────────
   // Explicit params win; signals fill in anything not specified
@@ -499,6 +501,18 @@ export function generateSmartRecipe({
 
   // ── Step 7: Cost intelligence ────────────────────────────────
   const priceBreakdown = computePriceBreakdown(lower, resolvedLocation, servings)
+  // Override useQty in breakdown items with user-specified quantities.
+  // computePriceBreakdown uses PRICE_DB.typicalUseQty internally — it doesn't
+  // know the user typed "200g". Patch after the fact so the cost table and
+  // the ingredient list stay in sync.
+  if (Object.keys(quantities).length > 0) {
+    priceBreakdown.items = priceBreakdown.items.map(pbItem => {
+      const userQty = quantities[pbItem.item]
+                   ?? quantities[pbItem.item.replace(/_/g, "")]
+                   ?? null
+      return userQty ? { ...pbItem, useQty: userQty } : pbItem
+    })
+  }
   const swapSavings    = getAllSwapSavings(lower, resolvedLocation, resolvedGoal)
   const budgetTier     = classifyRecipeTier(lower)
   const volatileWarn   = getHighVolatilityWarnings(lower)
@@ -515,20 +529,34 @@ export function generateSmartRecipe({
     .slice(0, 3)
 
   // ── Step 10: Ingredient detail list ──────────────────────────
-  const detailedIngredients = lower.map(item => ({
-    item,
-    qty:          estimateQuantity(item),
-    displayName:  capitalize(item),
-    hasNutrition: !!NUTRITION_DB[item],
-  }))
+  const detailedIngredients = lower.map(item => {
+    // Use user-specified qty when available (from normalizeInput parseRawQuantities)
+    const userQty = quantities[item] ?? quantities[item.replace(/_/g, "")] ?? null
+    return {
+      item,
+      qty:           userQty ?? estimateQuantity(item),
+      userSpecified: userQty !== null,
+      displayName:   capitalize(item),
+      hasNutrition:  !!NUTRITION_DB[item],
+    }
+  })
+
+  // ── Compute steps once + derive total cook time ─────────────────
+  const builtSteps       = generateSteps({ lower, goal: resolvedGoal, spice, location: resolvedLocation, skill })
+  const totalCookTimeSec = builtSteps.reduce((sum, st) => sum + (st.durationSeconds ?? 120), 0)
+  const totalCookTimeMin = Math.round(totalCookTimeSec / 60)
+  const totalCookTimeLabel = totalCookTimeMin < 60
+    ? `${totalCookTimeMin} min`
+    : `${Math.floor(totalCookTimeMin / 60)}h${totalCookTimeMin % 60 > 0 ? " " + (totalCookTimeMin % 60) + "m" : ""}`.trim()
 
   return {
     // ── Core ──────────────────────────────────────────────────
+    id:             Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
     title:          generateTitle(lower, resolvedGoal, spice, resolvedLocation, dishMeta),
     description:    generateDescription({ lower, goal: resolvedGoal, location: resolvedLocation, totals, dietaryProfile: dietary, dishMeta }),
     ingredients:    detailedIngredients,
     excluded:       excluded.map(capitalize),
-    steps:          generateSteps({ lower, goal: resolvedGoal, spice, location: resolvedLocation }),
+    steps:          builtSteps,
 
     // ── Macros ────────────────────────────────────────────────
     calories:       `${Math.round(totals.cal)} kcal`,
@@ -584,7 +612,9 @@ export function generateSmartRecipe({
     difficulty,
 
     // ── Cost & Budget ─────────────────────────────────────────
-    estimatedCost:  formatCost(priceBreakdown.totalPerServing, resolvedLocation),
+    estimatedCost:   formatCost(priceBreakdown.totalPerServing, resolvedLocation),
+    totalCookTime:   totalCookTimeLabel,   // "35 min" | "1h 10m"
+    totalCookTimeSec: totalCookTimeSec,    // raw seconds
     priceBreakdown,                // full per-ingredient breakdown
     budgetTier,                    // { tier, label, emoji, desc }
     swapSavings,                   // [{ item, swapTo, savedRupees, ... }]
@@ -614,6 +644,15 @@ export function generateSmartRecipe({
     goal:      resolvedGoal,
     servings,
     version:   5,
+  }
+  } catch (err) {
+    console.error("[generateSmartRecipe] error:", err)
+    return {
+      error:        true,
+      errorMessage: err?.message ?? "Recipe generation failed. Please try different ingredients.",
+      title:        "Generation Error",
+      id:           Date.now().toString(36),
+    }
   }
 }
 

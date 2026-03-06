@@ -329,6 +329,9 @@ const STEAM_INDICATORS       = new Set(["idli","dosa","semolina"])   // dish-lev
 const NO_COOK_INDICATORS     = new Set(["avocado","cucumber","lettuce","blueberries"])
 const BIRYANI_INDICATORS     = new Set(["saffron","ghee","curd"])    // combined with rice + meat
 const DEEP_FRY_INDICATORS    = new Set(["gram_flour","falafel","vada"])
+const PRESSURE_INDICATORS    = new Set(["chickpeas","rajma","chana_dal","toor_dal","moong_dal","masoor_dal","urad_dal"])  // legumes that really benefit from pressure
+const GRILL_INDICATORS       = new Set(["corn","capsicum","zucchini","eggplant","mushroom","paneer","chicken","fish","shrimp","tofu"])
+const AIRFRY_INDICATORS      = new Set(["potato","sweet_potato","cauliflower","broccoli","tofu","paneer","chickpeas"])
 
 export function detectCookingMethod(lower, location) {
   const has = item => lower.includes(item)
@@ -347,6 +350,17 @@ export function detectCookingMethod(lower, location) {
 
   // Deep-fry: gram flour + veg protein
   if (has("gram_flour") && (hasVeg || hasAny(VEG_PROT))) return "deepfry"
+
+  // Pressure cook: legume-heavy with no stir-fry ingredients (dal, rajma, chickpeas)
+  if (hasLeg && lower.filter(i => LEGUME_SET.has(i)).length >= 1 && !hasMeat && !hasAny(STIR_FRY_INDICATORS)) return "pressure"
+
+  // Grill: explicit grill markers — meat/paneer/veg with no sauce-heavy ingredients
+  if (hasMeat && hasAny(GRILL_INDICATORS) && !has("tomato_puree") && !has("cream") && !has("flour")) return "grill"
+
+  // Air-fry: oil-free crispy prep — potato/veg/tofu without liquid-based cooking
+  if (!hasMeat && !hasLeg && !hasGrain && lower.every(i => AIRFRY_INDICATORS.has(i) || !VEG_SET.has(i))) {
+    if (hasAny(AIRFRY_INDICATORS) && lower.length <= 5) return "airfry"
+  }
 
   // Stir-fry: wok indicators or Chinese/Thai + meat + veg
   if (hasAny(STIR_FRY_INDICATORS) || location === "China" || (location === "Thailand" && hasMeat && hasVeg)) return "stirfry"
@@ -901,6 +915,86 @@ function buildOnePotDalSteps({ lower, goal, spice, location, skill, profile, pro
   return steps
 }
 
+// ─────────────────────────────────────────────────────────────
+//  PRESSURE COOK — dal, rajma, chickpeas, chana
+//  Most common Indian cooking method — yet missing until now.
+//  Steps: soak → temper → pressure cook → finishing tadka → plate
+
+const GRAIN_COOK_TEXT = {
+  rice:              { text:`Stir once, bring to boil, reduce to absolute minimum heat. Lid on undisturbed for 12 min. No peeking — escaping steam is what ruins rice texture.`, durationSeconds:720 },
+  brown_rice:        { text:`1:2.5 water ratio. Cover, simmer 35 min on minimum heat. Rest off heat 10 min before fluffing.`, durationSeconds:2100 },
+  pasta:             { text:`Cook until al dente — 1–2 min less than the packet says. Reserve 1 cup pasta water before draining. ${DONENESS_CUES?.sauce?"Never rinse cooked pasta — the surface starch makes sauce cling.":""}`, durationSeconds:480 },
+  rice_noodles:      { text:`Add soaked noodles to the hot pan last. Toss rapidly 2–3 min — they just need to absorb the sauce and heat through.`, durationSeconds:150 },
+  semolina:          { text:`Pour hot liquid into roasted semolina slowly while stirring constantly to prevent lumps. Cook 3–4 min until it pulls away from the sides.`, durationSeconds:240 },
+  oats:              { text:`Add to warm liquid. Stir on medium-low for 4–5 min. Pull off heat while slightly loose — it thickens as it cools.`, durationSeconds:300 },
+  quinoa:            { text:`1:2 water ratio. Cover and simmer 15 min undisturbed. Fluff with a fork — look for the white tails (germ) separating from the seed.`, durationSeconds:900 },
+  noodles:           { text:`Toss cooked noodles in the wok over high heat. Sauce and stir constantly for 2–3 min.`, durationSeconds:180 },
+  ramen_noodles:     { text:`Add noodles to hot broth or sauce last. Stir to loosen and combine — 60 sec only.`, durationSeconds:60 },
+  flattened_rice:    { text:`Add rinsed flattened rice to the pan. Toss gently 3–4 min on medium — it dries out and each grain separates.`, durationSeconds:240 },
+  oats:              { text:`Stir on medium-low 4–5 min. Remove while slightly loose.`, durationSeconds:300 },
+}
+
+// ─────────────────────────────────────────────────────────────
+function buildPressureCookSteps({ lower, goal, spice, location, skill, proteins, grains, legumes, veggies, hasMeat, hasGrain, hasVeg }) {
+  const steps = []
+  const legume   = legumes[0] ?? "toor_dal"
+  const needSoak = ["chickpeas","rajma","chana_dal"].includes(legume)
+
+  // SOAK (for chickpeas and rajma)
+  if (needSoak) {
+    steps.push({ text: sk(skill,
+      `SOAK — Rinse ${capitalize(legume)} well. Soak in 3× water for 8 hours (or overnight). Drain and rinse again before cooking.`,
+      `SOAK — Rinse ${capitalize(legume)} until water runs clear. Soak 8 hours minimum — soaking reduces cook time by 40% and improves digestibility by breaking down oligosaccharides. Drain soaking water (it contains gas-causing compounds).`,
+      `SOAK — Soak ${capitalize(legume)} overnight. The longer the soak, the shorter the pressure cook time and the more evenly the legume hydrates. Discard the soaking water — cook in fresh water only.`
+    ), durationSeconds: 0 }) // passive step
+  }
+
+  // TEMPER — build the base
+  const tempIngredients = lower.filter(i => ["onion","tomato","garlic","ginger","cumin","mustard_seeds","curry_leaves"].includes(i))
+  steps.push({ text: sk(skill,
+    `TEMPER — Heat 1 tbsp oil/ghee in the pressure cooker. Add cumin seeds and let them splutter. Add ${tempIngredients.length > 0 ? tempIngredients.map(capitalize).join(", ") : "onion, garlic"} and sauté 4–5 min until onion is golden.`,
+    `TEMPER — Use medium heat. Add whole spices (cumin, mustard seeds if using) first — they release fat-soluble flavour in 30–45 sec. Layer aromatics: onion → garlic+ginger → tomato → ground spices. Each layer needs time to cook properly before adding the next.`,
+    `TEMPER — Build a proper masala base: cook onion until deep golden (not just translucent), add ginger-garlic paste and cook until raw smell is completely gone (~2 min), add tomato and cook until fat separates from the masala. This base defines the entire dish.`
+  ), durationSeconds: 300 })
+
+  // SPICE
+  const spiceStr = spice === "hot" ? "1 tsp chilli powder, ½ tsp garam masala" : spice === "mild" ? "¼ tsp chilli powder, ¼ tsp garam masala" : "½ tsp chilli powder, ¼ tsp garam masala"
+  steps.push({ text: sk(skill,
+    `SPICE — Add turmeric, ${spiceStr}, and salt. Stir 30 sec to coat and toast the spices.`,
+    `SPICE — Ground spices need 30–60 sec of direct heat to bloom — they go from raw and harsh to round and fragrant. Keep stirring and don't let them burn (add a splash of water if needed).`,
+    `SPICE — Toast ground spices briefly in the fat before adding liquid. The fat carries fat-soluble flavour compounds (curcumin in turmeric, capsaicin in chilli) and the heat volatilises the aromatic oils.`
+  ), durationSeconds: 60 })
+
+  // PRESSURE COOK
+  const waterRatio = legume === "rajma" ? "3 cups" : legume === "chickpeas" ? "2.5 cups" : "2 cups"
+  const whistles   = legume === "rajma" ? "6–8 whistles (20–25 min)" : legume === "chickpeas" ? "5–6 whistles (18–20 min)" : "3–4 whistles (12–15 min)"
+  steps.push({ text: sk(skill,
+    `PRESSURE COOK — Add ${capitalize(legume)} and ${waterRatio} water. Close the lid. Cook on medium-high for ${whistles}. Let pressure release naturally for 10 min before opening.`,
+    `PRESSURE COOK — Water ratio matters: too little = scorching, too much = watery dal. ${waterRatio} gives the right consistency after cooking. Natural pressure release (don't force it open) lets the legumes continue to absorb and prevents the skin from bursting.`,
+    `PRESSURE COOK — Pressure raises the boiling point of water to ~120°C — this is why legumes cook in a fraction of the stove time. The natural release phase is not just about safety: the depressurisation is gradual, letting the legume cells contract slowly and keeping texture intact.`
+  ), durationSeconds: legume === "rajma" ? 1500 : legume === "chickpeas" ? 1200 : 900 })
+
+  // FINISHING — mash + adjust
+  steps.push({ text: sk(skill,
+    `FINISH — Open the cooker. Mash lightly with a spoon if you want a creamier texture. Add more water if too thick. Taste and adjust salt. Simmer uncovered 5 min to bring it together.`,
+    `FINISH — The consistency you want: thick enough to coat a spoon but loose enough to pour. Mashing 20–30% of the dal gives body without losing all texture. The 5-min open simmer evaporates excess water and melds the flavours.`,
+    `FINISH — Judge the thickness: a well-cooked dal should fall in a slow ribbon from the spoon. Adjust with boiling water (never cold — it shocks the proteins and breaks the emulsion). A knob of ghee stirred in at this stage transforms the body and aroma.`
+  ), durationSeconds: 300 })
+
+  // TADKA — finishing tempering (the signature Indian technique)
+  steps.push({ text: sk(skill,
+    `TADKA — In a small pan heat 1 tbsp ghee. Add dried red chilli and a pinch of cumin. When seeds splutter, pour the hot tadka over the dal. Cover immediately for 30 sec to trap the aroma.`,
+    `TADKA — The finishing tadka is not decorative — it adds a fresh burst of fat-soluble flavour compounds on top of the cooked dal. The sizzle when you pour it over is the sound of flavour being transferred. Cover the pot immediately to keep the volatile aromatics in.`,
+    `TADKA — A proper tadka: get the ghee smoking hot, add whole spices quickly (they burn in seconds at this temperature), pour immediately. The thermal shock of hitting the cooler dal causes a violent sizzle that micro-atomises the fat — distributing flavour evenly throughout.`
+  ), durationSeconds: 60 })
+
+  // PLATE
+  steps.push(buildPlateStep(proteins, grains, legumes, veggies, goal, skill))
+
+  return steps
+}
+
+
 function buildBakesteps({ lower, goal, spice, location, skill, profile, proteins, grains, legumes, veggies, hasMeat }) {
   const steps = []
 
@@ -982,20 +1076,110 @@ function buildBiriyaniSteps({ lower, goal, spice, location, skill, profile, prot
   steps.push(buildPlateStep(proteins, grains, legumes, veggies, goal, skill))
   return steps
 }
+// ── GRILL BUILDER ─────────────────────────────────────────────────────────────
+// For charred proteins and vegetables. Smoke-forward technique.
+// Triggers on: meat/paneer/fish without sauce-heavy ingredients.
+function buildGrillSteps({ lower, goal, spice, location, skill, proteins, grains, legumes, veggies, hasMeat, hasVeg, hasGrain }) {
+  const steps = []
+  const protein = proteins[0] ?? "chicken"
+  const grillVeg = veggies.filter(v => ["capsicum","mushroom","zucchini","corn","eggplant","tomato","onion"].includes(v))
 
-// ── GRAIN COOK TEXT with durations ────────────────────────────
-const GRAIN_COOK_TEXT = {
-  rice:              { text:`Stir once, bring to boil, reduce to absolute minimum heat. Lid on undisturbed for 12 min. No peeking — escaping steam is what ruins rice texture.`, durationSeconds:720 },
-  brown_rice:        { text:`1:2.5 water ratio. Cover, simmer 35 min on minimum heat. Rest off heat 10 min before fluffing.`, durationSeconds:2100 },
-  pasta:             { text:`Cook until al dente — 1–2 min less than the packet says. Reserve 1 cup pasta water before draining. ${DONENESS_CUES?.sauce?"Never rinse cooked pasta — the surface starch makes sauce cling.":""}`, durationSeconds:480 },
-  rice_noodles:      { text:`Add soaked noodles to the hot pan last. Toss rapidly 2–3 min — they just need to absorb the sauce and heat through.`, durationSeconds:150 },
-  semolina:          { text:`Pour hot liquid into roasted semolina slowly while stirring constantly to prevent lumps. Cook 3–4 min until it pulls away from the sides.`, durationSeconds:240 },
-  oats:              { text:`Add to warm liquid. Stir on medium-low for 4–5 min. Pull off heat while slightly loose — it thickens as it cools.`, durationSeconds:300 },
-  quinoa:            { text:`1:2 water ratio. Cover and simmer 15 min undisturbed. Fluff with a fork — look for the white tails (germ) separating from the seed.`, durationSeconds:900 },
-  noodles:           { text:`Toss cooked noodles in the wok over high heat. Sauce and stir constantly for 2–3 min.`, durationSeconds:180 },
-  ramen_noodles:     { text:`Add noodles to hot broth or sauce last. Stir to loosen and combine — 60 sec only.`, durationSeconds:60 },
-  flattened_rice:    { text:`Add rinsed flattened rice to the pan. Toss gently 3–4 min on medium — it dries out and each grain separates.`, durationSeconds:240 },
-  oats:              { text:`Stir on medium-low 4–5 min. Remove while slightly loose.`, durationSeconds:300 },
+  // MARINADE — the entire character of a grilled dish lives here
+  steps.push({ text: sk(skill,
+    `MARINATE — Mix oil, lemon juice, salt, pepper${spice !== "mild" ? ", chilli powder" : ""} and any spices. Coat the ${capitalize(protein)} thoroughly. Marinate at least 30 min (up to overnight in the fridge).`,
+    `MARINATE — Acid (lemon, vinegar, curd) tenderises. Oil carries fat-soluble flavour. Salt draws moisture in by osmosis — don't be shy. Minimum 2 hours for ${protein === "chicken" ? "chicken" : "protein"}; overnight gives deeper penetration. Pat dry before grilling — wet protein steams instead of charring.`,
+    `MARINATE — Layer flavours: salt draws moisture and creates brine effect, acid denatures surface proteins for crust, fat carries aromatics deep into muscle fibres. Curd-based marinades (tandoori-style) are most effective on poultry — the calcium in curd triggers proteolytic enzymes that tenderise muscle. Minimum 4 hours.`
+  ), durationSeconds: 7200 }) // 2 hours marinate
+
+  // PREHEAT — often skipped, critical
+  steps.push({ text: sk(skill,
+    `PREHEAT GRILL — Heat your grill pan, outdoor grill, or oven grill to high for 5–10 min until very hot. Brush lightly with oil. A properly preheated grill = instant sear and char marks.`,
+    `PREHEAT — A screaming hot grill is non-negotiable. Test: hold your hand 5cm above the grate — if you can't hold it for 2 seconds, it's ready. Brush grates with oil just before adding protein. Cold grill = protein sticks and steams.`,
+    `PREHEAT — Target surface temperature 230–260°C. Oil the protein, not the grill — this prevents burning. For grill pan: heat dry on high 8 min until it starts to smoke slightly. The Maillard reaction (browning) begins at 154°C — your surface must be well above this.`
+  ), durationSeconds: 600 })
+
+  // GRILL PROTEIN
+  const proteinTime = protein === "chicken" ? "6–7 min per side" : protein === "fish" || protein === "shrimp" ? "3–4 min per side" : "4–5 min per side"
+  steps.push({ text: sk(skill,
+    `GRILL ${capitalize(protein).toUpperCase()} — Place on hot grill. Don't move it — let it develop char marks. Flip once after ${proteinTime}. ${DONENESS_CUES[protein] ?? "Cook until done through."}`,
+    `GRILL — Place protein presentation-side down first. Resist touching it for ${proteinTime} — it will release naturally when a crust forms. If it sticks, it's not ready to flip. One flip only. ${DONENESS_CUES[protein] ?? ""}`,
+    `GRILL — 45° angle to grates for the first 3 min, rotate 45° for crosshatch marks, then flip. Use a digital thermometer: ${protein === "chicken" ? "74°C" : protein === "fish" ? "63°C" : protein === "pork" ? "63°C" : "60°C"}. Remember: internal temp rises 3–5°C after you pull it off heat.`
+  ), durationSeconds: protein === "fish" || protein === "shrimp" ? 360 : 840 })
+
+  // GRILL VEGETABLES
+  if (grillVeg.length > 0) {
+    steps.push({ text: sk(skill,
+      `GRILL VEGETABLES — Brush ${grillVeg.map(capitalize).join(", ")} with oil. Grill 3–5 min per side until char marks appear and they're just tender. Season immediately off the grill.`,
+      `GRILL VEG — Different vegetables need different times: dense veg (corn, eggplant) 5–6 min per side; soft veg (mushroom, capsicum) 3–4 min. Season with salt and a squeeze of lemon the moment they come off the grill — they absorb seasoning better when hot.`,
+      `GRILL VEG — Cut surfaces should be dry before going on the grill. Oil on the flat cut face, not the skin. For capsicum: grill skin-side down until blackened, then steam in a covered bowl 5 min — skin peels off cleanly, leaving sweet roasted flesh.`
+    ), durationSeconds: 360 })
+  }
+
+  // REST — almost always skipped by home cooks
+  steps.push({ text: sk(skill,
+    `REST — Let the grilled ${capitalize(protein)} rest 5 min before cutting. Cutting immediately lets all the juices run out.`,
+    `REST — 5 min for smaller pieces, 10 min for a whole breast or thick steak. Tent loosely with foil — traps steam and finishes cooking the last few degrees. The fibres relax and juices redistribute throughout the meat.`,
+    `REST — Internal temp rises 3–5°C during rest (carryover cooking). Pull at 70°C for chicken, not 74°C — it finishes perfectly. During rest, muscle fibres relax and re-absorb expelled juices. Cutting too early = grey puddle on the board.`
+  ), durationSeconds: 300 })
+
+  if (hasGrain) {
+    steps.push({ text: `GRAIN — While protein rests, prepare ${grains.map(capitalize).join(", ")} using the stovetop method. ${GRAIN_COOK_TEXT?.[grains[0]]?.text ?? "Cook according to packet instructions."}`, durationSeconds: GRAIN_COOK_TEXT?.[grains[0]]?.durationSeconds ?? 600 })
+  }
+
+  steps.push(buildPlateStep(proteins, grains, legumes, veggies, goal, skill))
+  return steps
+}
+
+// ── AIR-FRY BUILDER ───────────────────────────────────────────────────────────
+// Oil-free or minimal-oil crispy technique for veg/tofu/paneer.
+// Triggers when ingredients are all in AIRFRY_INDICATORS and no meat/legumes.
+function buildAirFrySteps({ lower, goal, spice, location, skill, proteins, grains, legumes, veggies, hasGrain }) {
+  const steps = []
+  const mainItem = lower.find(i => AIRFRY_INDICATORS.has(i)) ?? lower[0]
+  const isVegProt = proteins.some(p => ["paneer","tofu","soy_chunks"].includes(p))
+
+  // PREP & CUT
+  steps.push({ text: sk(skill,
+    `PREP — Wash and cut ${lower.map(capitalize).join(", ")} into equal pieces for even cooking. Pat completely dry — moisture is the enemy of crispiness in an air fryer.`,
+    `PREP — Uniform cuts are critical in an air fryer: hot air circulates evenly and thin edges burn before thick centres cook through. Cut to 2cm cubes or 1cm slices. Dry thoroughly with a kitchen towel — even a little moisture creates steam and prevents crisping.`,
+    `PREP — Cut geometry determines outcome: cubes (crispy on more faces), slices (maximum crust), wedges (crispy outside, fluffy inside). Pat bone-dry. For tofu: press for 30 min under a heavy pan to extract moisture — this is non-negotiable for crispiness.`
+  ), durationSeconds: 600 })
+
+  // SEASON
+  steps.push({ text: sk(skill,
+    `SEASON — Toss in a bowl with 1 tsp oil, salt, pepper${spice !== "mild" ? ", chilli flakes" : ""} and any spice mix. Make sure every piece is coated.`,
+    `SEASON — 1 tsp oil maximum for every 400g. More oil = steaming, not crisping. The oil's job is only to carry seasoning and prevent sticking. Mix in the bowl — not on the tray — so every piece is coated evenly. Add cornstarch (½ tsp) for extra crunch on tofu or potato.`,
+    `SEASON — Oil quantity is precise: 3–5ml per 400g. Spices go in two stages: half before cooking (penetrates inside), half the last 2 min (stays vibrant on the surface). For maximum crust: add 1 tsp cornstarch. The starch gelatinises in the hot air, forming a rigid coating.`
+  ), durationSeconds: 180 })
+
+  // PREHEAT AIR FRYER
+  steps.push({ text: sk(skill,
+    `PREHEAT — Preheat air fryer to 200°C for 3–5 min. A preheated basket ensures food starts crisping immediately rather than slowly coming up to temperature.`,
+    `PREHEAT — Always preheat 3–5 min at 200°C. An air fryer is a convection oven in miniature — the fan creates rapid air movement that strips moisture from the surface. Starting from cold = the first few minutes just heat the food, not crisp it.`,
+    `PREHEAT — 200°C for 5 min. The basket temperature matters as much as air temperature — a hot basket instantly sears the bottom surface for a crust. If your model doesn't preheat, add 3 min to cook time.`
+  ), durationSeconds: 300 })
+
+  // AIR FRY
+  const cookTime = mainItem === "potato" ? "18–22 min" : mainItem === "sweet_potato" ? "16–20 min" : isVegProt ? "12–15 min" : "12–15 min"
+  steps.push({ text: sk(skill,
+    `AIR FRY — Add food in a single layer — don't pile or overcrowd. Air fry at 200°C for ${cookTime}, shaking the basket halfway through.`,
+    `AIR FRY — Single layer only — overlapping pieces steam each other. Fill basket 60% max. ${cookTime} at 200°C. Shake at the halfway point. For paneer or tofu, spray a tiny bit of oil at the shake point for extra browning. Every air fryer runs slightly different — check 3 min before timer ends.`,
+    `AIR FRY — Batch cook if needed — overcrowding drops interior temperature and kills the Maillard reaction. ${cookTime} at 200°C. Midway shake is mandatory. For the last 3 min: reduce to 180°C — the outside is already set, lower temp lets the inside finish without burning the crust.`
+  ), durationSeconds: mainItem === "potato" ? 1200 : 900 })
+
+  // FINISH / CHECK DONENESS
+  steps.push({ text: sk(skill,
+    `CHECK — The outside should be golden-brown and crispy. ${mainItem === "potato" ? DONENESS_CUES.potato : mainItem === "tofu" ? DONENESS_CUES.tofu : mainItem === "paneer" ? DONENESS_CUES.paneer : "It should feel firm and spring back when pressed."} Season with a final pinch of salt while hot.`,
+    `DONENESS — Golden-brown crust, crispy when you tap it, no soft spots. ${mainItem === "tofu" ? DONENESS_CUES.tofu : mainItem === "paneer" ? DONENESS_CUES.paneer : "Pierce with a knife — it should slide in cleanly."} Salt the moment it comes out — seasoning sticks to hot food better than cold.`,
+    `DONENESS — Listen: tap the surface — it should sound hollow and feel rigid, not soft. The colour should be deep amber-gold, not pale yellow. For tofu: squeeze gently — the exterior should feel firm and resist, the interior soft. Season immediately off heat; the surface is most receptive when hot.`
+  ), durationSeconds: 60 })
+
+  if (hasGrain) {
+    steps.push({ text: `GRAIN — Prepare ${grains.map(capitalize).join(", ")} while the air fryer runs. ${GRAIN_COOK_TEXT?.[grains[0]]?.text ?? "Cook according to packet instructions."}`, durationSeconds: GRAIN_COOK_TEXT?.[grains[0]]?.durationSeconds ?? 600 })
+  }
+
+  steps.push(buildPlateStep(proteins, grains, legumes, veggies, goal, skill))
+  return steps
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -1033,6 +1217,9 @@ export function generateSteps({ lower, goal, spice, location, skill = "intermedi
     case "bake":
     case "roast":     rawSteps = buildBakesteps(ctx);      break
     case "biryani":   rawSteps = buildBiriyaniSteps(ctx);  break
+    case "pressure":  rawSteps = buildPressureCookSteps(ctx); break
+    case "grill":     rawSteps = buildGrillSteps(ctx);     break
+    case "airfry":    rawSteps = buildAirFrySteps(ctx);    break
     default:          rawSteps = buildSauteSteps(ctx);     break
   }
 

@@ -54,6 +54,51 @@ import { NUTRITION_DB }                    from "./nutritionDB.js"
 //  "200g paneer" → "paneer", "1 cup rice" → "rice"
 // ═══════════════════════════════════════════════════════════════
 
+// ── Unit → grams conversion map (used by parseRawQuantities) ──
+const UNIT_TO_GRAMS = {
+  g:1, gm:1, gms:1, gram:1, grams:1,
+  kg:1000, kilogram:1000, kilograms:1000,
+  ml:1, milliliter:1, millilitre:1,
+  l:1000, litre:1000, liter:1000, litres:1000, liters:1000,
+  oz:28, lb:454,
+  cup:240, cups:240,
+  tbsp:15, tablespoon:15, tablespoons:15,
+  tsp:5, teaspoon:5, teaspoons:5,
+  piece:100, pieces:100, pc:100, pcs:100,
+  handful:30, bunch:80, clove:5,
+}
+
+/**
+ * parseRawQuantities — extract user-specified quantities from raw text.
+ * Runs on the original string before any stripping.
+ * Returns a plain object keyed by the ingredient word (lowercased, underscored).
+ *
+ * Handles:
+ *   "200g chicken"     → { chicken: 200 }
+ *   "3 eggs"           → { egg: 300 }   (3 × 100g typical)
+ *   "1 cup rice"       → { rice: 240 }
+ *   "200 g paneer"     → { paneer: 200 }
+ *   "half kg chicken"  → not matched (half not a number — that's fine)
+ */
+function parseRawQuantities(raw) {
+  const result = {}
+  // Pattern: number (optional decimal) + optional unit + ingredient word(s)
+  // Handles "200g chicken", "200 g chicken", "3 eggs", "1 cup basmati rice"
+  const RE = /(\d+(?:\.\d+)?)\s*(g|gm|gms|gram|grams|kg|ml|l|litre|liter|litres|liters|oz|lb|cup|cups|tbsp|tablespoon|tsp|teaspoon|piece|pieces|pc|pcs|handful|bunch|clove)?\s+([a-zA-Z][a-zA-Z\s]{1,25}?)(?=[,\d]|$)/gi
+  for (const m of raw.matchAll(RE)) {
+    const num    = parseFloat(m[1])
+    const unit   = (m[2] ?? 'piece').toLowerCase()
+    const phrase = m[3].trim().toLowerCase().split(/\s+/).join('_')
+    const mult   = UNIT_TO_GRAMS[unit] ?? 100   // default: treat bare count as 100g/unit
+    const grams  = Math.round(num * mult)
+    // Store under both plural and singular so "2 eggs" matches ingredient key "egg"
+    result[phrase] = grams
+    if (phrase.endsWith('s') && phrase.length > 2) result[phrase.slice(0, -1)] = grams
+    if (phrase.endsWith('es') && phrase.length > 3) result[phrase.slice(0, -2)] = grams
+  }
+  return result
+}
+
 const UNITS = new Set([
   "g","gm","gms","gram","grams","kg","kgs","kilogram","kilograms",
   "ml","milliliter","millilitre","l","litre","liter","litres","liters",
@@ -349,6 +394,22 @@ const BENGALI_MAP = {
   "maach":         "fish",
   "mach":          "fish",
   "ilish":         "fish",      // hilsa fish
+  "salmon":        "salmon",
+  "salmone":       "salmon",
+  "tuna":          "tuna",
+  "yellowfin":     "tuna",
+  "skipjack":      "tuna",
+  "mackerel":      "mackerel",
+  "bangda":        "mackerel",  // Indian mackerel
+  "bhangda":       "mackerel",
+  "sardine":       "sardine",
+  "sardines":      "sardine",
+  "pomfret":       "pomfret",
+  "paplet":        "pomfret",   // Mumbai name
+  "rohu":          "rohu",
+  "rui":           "rohu",      // Bengali name
+  "catla":         "catla",
+  "katla":         "catla",
   "chingri":       "shrimp",
   "mangsho":       "lamb",
   "mutton":        "lamb",
@@ -1019,7 +1080,7 @@ function splitNegation(text) {
  */
 export function normalizeInput(raw) {
   if (!raw || !raw.trim()) {
-    return { ingredients: [], excluded: [], signals: {}, unknown: [], suggestions: [] }
+    return { ingredients: [], excluded: [], signals: {}, unknown: [], suggestions: [], quantities: {}, unknown: [], suggestions: [] }
   }
 
   const text = raw.trim().toLowerCase().replace(/[^\w\s\-']/g, " ")
@@ -1081,12 +1142,16 @@ export function normalizeInput(raw) {
     return true
   })
 
+  // Parse user-specified quantities from raw input
+  const quantities = parseRawQuantities(raw)
+
   return {
     ingredients,
     excluded,
     signals,
     unknown:     [...posResult.unknowns, ...negResult.unknowns],
     suggestions: [...posResult.suggestions, ...negResult.suggestions],
+    quantities,  // { [rawIngredientWord]: grams } — user-specified amounts
   }
 }
 
