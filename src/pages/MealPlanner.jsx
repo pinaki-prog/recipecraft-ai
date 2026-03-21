@@ -304,9 +304,10 @@ export default function MealPlanner({ onClose, syncMealPlan, user }) {
     return readLS("macroTargets", DEFAULT_TARGETS)
   })
   const [history, setHistory] = useState(() => readLS("savedRecipes", []))
-  const [view,    setView]    = useState("planner")  // "planner" | "grocery" | "targets"
-  const [activeDay, setActiveDay] = useState("Monday")
-  const [openPicker, setOpenPicker] = useState(null)  // "Day-Slot" | null
+  const [view,       setView]       = useState("planner")
+  const [activeDay,  setActiveDay]  = useState("Monday")
+  const [openPicker, setOpenPicker] = useState(null)
+  const [pdfLoading, setPdfLoading] = useState(false)
 
   // Persist plan + targets locally
   useEffect(() => { writeLS("mealPlan", plan) }, [plan])
@@ -321,7 +322,7 @@ export default function MealPlanner({ onClose, syncMealPlan, user }) {
       syncMealPlan({ plan, name: planName, slotNotes, targets })
     }, 2000)   // 2s debounce — don't spam on every slot click
     return () => clearTimeout(t)
-  }, [plan, targets, slotNotes])
+  }, [plan, targets, slotNotes, planName])
 
   // Reload history when component mounts (latest from Home)
   useEffect(() => { setHistory(readLS("savedRecipes", [])) }, [])
@@ -361,7 +362,7 @@ export default function MealPlanner({ onClose, syncMealPlan, user }) {
   }, [])
 
   const savePlan = () => {
-    const entry = { id: Date.now().toString(36), name: planName, plan, createdAt: new Date().toLocaleDateString() }
+    const entry = { id: Date.now().toString(36), name: planName, plan, slotNotes, targets, createdAt: new Date().toLocaleDateString() }
     const updated = [entry, ...savedPlans].slice(0, 10)
     setSavedPlans(updated)
     writeLS("savedMealPlans", updated)
@@ -369,7 +370,13 @@ export default function MealPlanner({ onClose, syncMealPlan, user }) {
     syncMealPlan?.({ plan, name: planName, slotNotes, targets })
   }
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    if (filledCount === 0) {
+      alert("Add some meals to your plan before exporting.")
+      return
+    }
+    setPdfLoading(true)
+    try {
     const rows = DAYS.map(day => {
       const dt = dayTotals(plan, day)
       const meals = SLOTS.map(slot => {
@@ -431,11 +438,18 @@ export default function MealPlanner({ onClose, syncMealPlan, user }) {
       margin: 0, filename: `${planName.replace(/\s+/g,"-")}-meal-plan.pdf`,
       html2canvas: { scale: 2 }, jsPDF: { unit: "mm", format: "a4", orientation: "landscape" }
     }).from(html).save()
+    } catch (err) {
+      console.error("[MealPlanner PDF]", err)
+    } finally {
+      setPdfLoading(false)
+    }
   }
 
   const loadPlan = (entry) => {
     setPlan(entry.plan)
     setPlanName(entry.name)
+    if (entry.slotNotes)  setSlotNotes(entry.slotNotes)
+    if (entry.targets)    setTargets(entry.targets)
   }
 
   const deleteSavedPlan = (id) => {
@@ -507,9 +521,9 @@ export default function MealPlanner({ onClose, syncMealPlan, user }) {
               className="px-3 py-2 rounded-xl text-sm text-red-400 hover:bg-red-500/10 transition-colors border border-red-500/20">
               🗑 Clear Week
             </button>
-            <button onClick={exportPDF}
-              className="px-3 py-2 rounded-xl text-sm text-purple-400 hover:bg-purple-500/10 transition-colors border border-purple-500/20">
-              📄 PDF
+            <button onClick={exportPDF} disabled={pdfLoading}
+              className="px-3 py-2 rounded-xl text-sm text-purple-400 hover:bg-purple-500/10 transition-colors border border-purple-500/20 disabled:opacity-50">
+              {pdfLoading ? "⏳ Generating…" : "📄 PDF"}
             </button>
             <button onClick={onClose}
               className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/8 text-gray-300 hover:text-white hover:bg-white/15 transition-colors">

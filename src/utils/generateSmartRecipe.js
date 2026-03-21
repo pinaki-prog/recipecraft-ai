@@ -292,6 +292,7 @@ function generateTitle(lower, goal, spice, location, dishMeta) {
   const pp   = lower.find(i => NUTRITION_DB[i]?.p > 15)
             ?? lower.find(i => NUTRITION_DB[i]?.c > 20)
             ?? lower[0]
+            ?? "dish"   // fallback — lower should never be empty here but guard anyway
   const sec  = lower[1] && lower[1] !== pp ? ` & ${capitalize(lower[1])}` : ""
 
   return [
@@ -406,9 +407,10 @@ export function generateSmartRecipe({
   location     = "India",
   skill        = "beginner",
   servings     = 1,
-  quantities   = {},   // user-specified qtys from normalizeInput v2
-  nutritionOverrides = {}, // USDA real data for unknown ingredients
+  quantities   = {},
+  nutritionOverrides = {},
 }) {
+  const safeServings = Math.max(1, Math.round(Number(servings) || 1))
   if (!ingredients || ingredients.length === 0) return null
   try {
 
@@ -448,6 +450,7 @@ export function generateSmartRecipe({
   }
 
   if (lower.length === 0) return null
+  if (lower.length > 20) lower = lower.slice(0, 20)  // cap — more than 20 gives meaningless results
 
   // ── Step 3: Compute full nutrition totals ────────────────────
   // Uses computeNutritionTotals() from nutritionDB v2.
@@ -469,7 +472,7 @@ export function generateSmartRecipe({
   const inflam       = getInflamScore(lower)
   const glycemic     = getGlycemicProfile(lower)
   const proteinQual  = getProteinQuality(lower)
-  const vitaminFlags = getVitaminFlags(lower, servings)
+  const vitaminFlags = getVitaminFlags(lower, safeServings)
   const healthTags   = getHealthTags(lower, 8)
   const dietary      = getDietaryProfile(lower)
   const allergens    = getAllergens(lower)
@@ -501,7 +504,7 @@ export function generateSmartRecipe({
   const difficulty = computeDifficulty(ingredients, lower)
 
   // ── Step 7: Cost intelligence ────────────────────────────────
-  const priceBreakdown = computePriceBreakdown(lower, resolvedLocation, servings)
+  const priceBreakdown = computePriceBreakdown(lower, resolvedLocation, safeServings)
   // Override useQty in breakdown items with user-specified quantities.
   // computePriceBreakdown uses PRICE_DB.typicalUseQty internally — it doesn't
   // know the user typed "200g". Patch after the fact so the cost table and
@@ -545,7 +548,7 @@ export function generateSmartRecipe({
   // ── Compute steps once + derive total cook time ─────────────────
   const builtSteps       = generateSteps({ lower, goal: resolvedGoal, spice, location: resolvedLocation, skill })
   const totalCookTimeSec = builtSteps.reduce((sum, st) => sum + (st.durationSeconds ?? 120), 0)
-  const totalCookTimeMin = Math.round(totalCookTimeSec / 60)
+  const totalCookTimeMin = Math.max(1, Math.round(totalCookTimeSec / 60))
   const totalCookTimeLabel = totalCookTimeMin < 60
     ? `${totalCookTimeMin} min`
     : `${Math.floor(totalCookTimeMin / 60)}h${totalCookTimeMin % 60 > 0 ? " " + (totalCookTimeMin % 60) + "m" : ""}`.trim()
@@ -707,8 +710,8 @@ function opScore(cal, p, c, f, goal) {
   return hs + p * gw.protein + cal * gw.calorie * 0.01
 }
 
-function macrosForItems(items, goal) {
-  const t = computeNutritionTotals(items)
+function macrosForItems(items, goal, nutritionOverrides = {}) {
+  const t = computeNutritionTotals(items, nutritionOverrides)
   if (goal === "weight_loss") { t.cal *= 0.85; t.f *= 0.75; t.p *= 1.10 }
   if (goal === "muscle_gain") { t.p  *= 1.25; t.cal *= 1.15 }
   return [t.cal, t.p, t.c, t.f]
@@ -725,6 +728,7 @@ export function optimizeRecipe({
   skill          = "beginner",
   servings       = 1,
   maxCostPerServing,
+  nutritionOverrides = {},  // USDA real data for unknown ingredients
 }) {
   if (!ingredients || ingredients.length === 0) return null
 
@@ -740,12 +744,13 @@ export function optimizeRecipe({
   }
 
   if (lower.length === 0) return null
+  if (lower.length > 20) lower = lower.slice(0, 20)
 
   const itemCost  = item => computeIngredientCost(item, location)?.cost ?? 15
   const totalCost = items => items.reduce((s, i) => s + itemCost(i), 0)
 
   let best  = [...lower]
-  let bestScore = opScore(...macrosForItems(best, resolvedGoal), resolvedGoal)
+  let bestScore = opScore(...macrosForItems(best, resolvedGoal, nutritionOverrides), resolvedGoal)
   const changesApplied = []
 
   for (const item of lower) {
@@ -754,7 +759,7 @@ export function optimizeRecipe({
       if (lower.includes(candidate)) continue
       const trial = best.map(i => i === item ? candidate : i)
       if (maxCostPerServing && totalCost(trial) > maxCostPerServing) continue
-      const score = opScore(...macrosForItems(trial, resolvedGoal), resolvedGoal)
+      const score = opScore(...macrosForItems(trial, resolvedGoal, nutritionOverrides), resolvedGoal)
       if (score >= bestScore || (maxCostPerServing && totalCost(trial) < totalCost(best))) {
         bestScore = score
         best = trial
@@ -780,7 +785,10 @@ export function optimizeRecipe({
     location,
     skill,
     servings,
+    nutritionOverrides,
   })
+
+  if (!result || result.error) return result  // propagate error cleanly
 
   if (!result) return null
 

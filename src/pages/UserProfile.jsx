@@ -93,7 +93,10 @@ export default function UserProfile({ onClose, onSave }) {
     catch { return DEFAULT }
   })
   const [saved,   setSaved]   = useState(false)
-  const [tab,     setTab]     = useState("profile")  // "profile" | "results"
+  const [tab,     setTab]     = useState("profile")  // always start on profile tab
+
+  // Reset to profile tab every time the modal opens
+  useEffect(() => { setTab("profile") }, [])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -101,6 +104,13 @@ export default function UserProfile({ onClose, onSave }) {
   const filled = form.weight && form.height && form.age
 
   function handleSave() {
+    // Validate numeric fields before saving
+    const age    = parseFloat(form.age)
+    const weight = parseFloat(form.weight)
+    const height = parseFloat(form.height)
+    if (form.age    && (isNaN(age)    || age    < 1   || age    > 120)) return
+    if (form.weight && (isNaN(weight) || weight < 20  || weight > 500)) return
+    if (form.height && (isNaN(height) || height < 50  || height > 300)) return
     localStorage.setItem("userProfile", JSON.stringify(form))
     onSave?.(form, stats)
     setSaved(true)

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { toPng } from "html-to-image"
 import html2pdf from "html2pdf.js"
 import { motion, AnimatePresence } from "framer-motion"
@@ -227,13 +227,13 @@ function HealthScorePanel({ recipe, tier }) {
     <div className="mb-8">
       <div className="flex justify-between items-center text-sm text-gray-400 mb-2">
         <span className="font-semibold text-base text-white">Health Score</span>
-        <span className={`font-bold text-lg ${tier.color}`}>{recipe.healthScore}/100</span>
+        <span className={`font-bold text-lg ${tier.color}`}>{recipe.healthScore ?? 0}/100</span>
       </div>
       <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden mb-3">
         <motion.div
           className="h-full bg-gradient-to-r from-green-400 to-emerald-500 rounded-full"
           initial={{ width: 0 }}
-          animate={{ width: `${recipe.healthScore}%` }}
+          animate={{ width: `${recipe.healthScore ?? 0}%` }}
           transition={{ duration: 1.2, ease: "easeOut" }}
         />
       </div>
@@ -745,6 +745,7 @@ function OptimizationBanner({ recipe }) {
 export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFavourite, userProfile, onRemix, onSaveNote }) {
   const cardRef      = useRef(null)
   const intervalRefs = useRef({})
+  const toastTimerRef = useRef(null)
 
   const [servings,          setServings]          = useState(1)
   const [stepTimers,        setStepTimers]        = useState({})
@@ -792,6 +793,47 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
     return () => { Object.values(intervalRefs.current).forEach(clearInterval) }
   }, [])
 
+  // Inject print stylesheet once — overrides dark colors for browser print
+  useEffect(() => {
+    const id = "recipe-print-style"
+    if (document.getElementById(id)) return
+    const style = document.createElement("style")
+    style.id = id
+    style.textContent = `
+      @media print {
+        body { background: white !important; color: black !important; }
+        .no-export { display: none !important; }
+        [class*="text-gray"] { color: #333 !important; }
+        [class*="text-white"] { color: #111 !important; }
+        [class*="bg-white\\/"] { background: transparent !important; }
+        [class*="border-white\\/"] { border-color: #ddd !important; }
+        [class*="text-orange"] { color: #c2410c !important; }
+        [class*="text-green"] { color: #166534 !important; }
+        [class*="text-blue"] { color: #1e40af !important; }
+        [class*="text-purple"] { color: #6b21a8 !important; }
+        [class*="text-pink"] { color: #9d174d !important; }
+        .fixed, .sticky { position: static !important; }
+        button { display: none !important; }
+      }
+    `
+    document.head.appendChild(style)
+    return () => { document.getElementById(id)?.remove() }
+  }, [])
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return
+      if (cookingMode)    { setCookingMode(false); return }
+      if (showRemix)      { setShowRemix(false);   return }
+      if (showNutrLabel)  { setShowNutrLabel(false); return }
+      if (deepDiveItem)   { setDeepDiveItem(null); return }
+      if (compareMode)    { setCompareMode(false); return }
+      if (showRadar)      { setShowRadar(false);   return }
+      if (editingNote)    { setEditingNote(false); return }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [cookingMode, showRemix, showNutrLabel, deepDiveItem, compareMode, showRadar, editingNote])
+
   if (!recipe) return null
 
   const s = servings
@@ -836,22 +878,23 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
   const displayCarbs   = per100Factor ? `${(parseNum(recipe.carbs)    * per100Factor).toFixed(1)} g`   : scaledCarbs
   const displayFats    = per100Factor ? `${(parseNum(recipe.fats)     * per100Factor).toFixed(1)} g`   : scaledFats
 
-  const radarData = [
+  const radarData = useMemo(() => [
     { subject: "Protein",  value: Math.min(100, Math.round(parseNum(recipe.protein)  * s / 60   * 100)) },
     { subject: "Carbs",    value: Math.min(100, Math.round(parseNum(recipe.carbs)    * s / 150  * 100)) },
     { subject: "Fat",      value: Math.min(100, Math.round(parseNum(recipe.fats)     * s / 65   * 100)) },
     { subject: "Calories", value: Math.min(100, Math.round(parseNum(recipe.calories) * s / 1000 * 100)) },
-    { subject: "Health",   value: recipe.healthScore },
-  ]
+    { subject: "Health",   value: recipe.healthScore ?? 0 },
+  ], [recipe, s])
 
-  const tier = getHealthTier(recipe.healthScore)
+  const tier = useMemo(() => getHealthTier(recipe.healthScore ?? 0), [recipe.healthScore])
 
-  const showToast = (msg) => {
+  const showToast = useCallback((msg) => {
+    clearTimeout(toastTimerRef.current)
     setToast(msg)
-    setTimeout(() => setToast(""), 2500)
-  }
+    toastTimerRef.current = setTimeout(() => setToast(""), 2500)
+  }, [])
 
-  const saveNote = (text) => {
+  const saveNote = useCallback((text) => {
     try {
       const notes = JSON.parse(localStorage.getItem("recipeNotes")) ?? {}
       notes[recipe.id] = text
@@ -859,54 +902,74 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
     } catch {}
     setRecipeNote(text)
     onSaveNote?.(recipe.id, text)   // ← push to Supabase
-  }
+  }, [recipe?.id, onSaveNote])
 
   const downloadPDF = async () => {
     if (!cardRef.current) return
     setPdfMode(true)
-    await new Promise(r => setTimeout(r, 100))
-    await html2pdf().set({
-      margin: 0.5,
-      filename: `${recipe.title}.pdf`,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
-    }).from(cardRef.current).save()
-    setPdfMode(false)
+    try {
+      await new Promise(r => setTimeout(r, 100))
+      await html2pdf().set({
+        margin: 0.5,
+        filename: `${recipe.title}.pdf`,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+      }).from(cardRef.current).save()
+    } catch (err) {
+      console.error("[PDF] Export failed:", err)
+      showToast("❌ PDF export failed — try again")
+    } finally {
+      setPdfMode(false)
+    }
   }
 
   const exportImage = async () => {
     if (!cardRef.current) return
     setPdfMode(true)
-    await new Promise(r => setTimeout(r, 100))
-    const dataUrl = await toPng(cardRef.current, {
-      backgroundColor: "#111827",
-      filter: n => !n.classList?.contains("no-export"),
-    })
-    setPdfMode(false)
-    const link = document.createElement("a")
-    link.download = `${recipe.title}.png`
-    link.href = dataUrl
-    link.click()
+    try {
+      await new Promise(r => setTimeout(r, 100))
+      const dataUrl = await toPng(cardRef.current, {
+        backgroundColor: "#111827",
+        filter: n => !n.classList?.contains("no-export"),
+      })
+      const link = document.createElement("a")
+      link.download = `${recipe.title}.png`
+      link.href = dataUrl
+      link.click()
+    } catch (err) {
+      console.error("[Image] Export failed:", err)
+      showToast("❌ Image export failed — try again")
+    } finally {
+      setPdfMode(false)
+    }
   }
 
   const shareRecipe = async () => {
-    const text = `${recipe.title}\nCalories: ${scaledCal} | Protein: ${scaledProtein} | Servings: ${s}\n\n${recipe.description}`
-    if (navigator.share) await navigator.share({ title: recipe.title, text })
-    else { await navigator.clipboard.writeText(text); showToast("📋 Recipe copied to clipboard!") }
+    try {
+      const text = `${recipe.title}\nCalories: ${scaledCal} | Protein: ${scaledProtein} | Servings: ${s}\n\n${recipe.description ?? ""}`
+      if (navigator.share) await navigator.share({ title: recipe.title, text })
+      else { await navigator.clipboard.writeText(text); showToast("📋 Recipe copied to clipboard!") }
+    } catch (err) {
+      if (err?.name !== "AbortError") showToast("❌ Could not share — try copying manually")
+    }
   }
 
   const copyShoppingList = async () => {
-    const scaled = recipe.ingredients.map(ing => ({ item: ing.item, qty: Math.round(ing.qty * s) }))
-    const groups = categoriseIngredients(scaled)
-    const text =
-      `🛒 Shopping List — ${recipe.title} (${s} serving${s > 1 ? "s" : ""})\n\n` +
-      Object.entries(groups)
-        .filter(([, items]) => items.length > 0)
-        .map(([h, items]) => `${h}\n${items.join("\n")}`)
-        .join("\n\n")
-    await navigator.clipboard.writeText(text)
-    showToast("🛒 Shopping list copied!")
+    try {
+      const scaled = (recipe.ingredients ?? []).map(ing => ({ item: ing.item, qty: Math.round(ing.qty * s) }))
+      const groups = categoriseIngredients(scaled)
+      const text =
+        `🛒 Shopping List — ${recipe.title} (${s} serving${s > 1 ? "s" : ""})\n\n` +
+        Object.entries(groups)
+          .filter(([, items]) => items.length > 0)
+          .map(([h, items]) => `${h}\n${items.join("\n")}`)
+          .join("\n\n")
+      await navigator.clipboard.writeText(text)
+      showToast("🛒 Shopping list copied!")
+    } catch {
+      showToast("❌ Clipboard access denied — check browser permissions")
+    }
   }
 
   const toggleTimer = (index, step) => {
@@ -989,7 +1052,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
 
       <motion.div ref={cardRef} initial={{ opacity: 0, y: 60 }} animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8 }}
-        className="bg-[#111827] border border-white/10 rounded-3xl p-8 md:p-10 shadow-2xl">
+        className="bg-[#111827] border border-white/10 rounded-3xl p-8 md:p-10 shadow-2xl print:bg-white print:text-black print:border-0 print:shadow-none print:rounded-none print:p-4">
 
         {/* ── Optimization banner ──────────────────────────── */}
         <OptimizationBanner recipe={recipe} />
@@ -1014,7 +1077,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
             <span>{tier.emoji}</span>
             <span>{tier.label}</span>
             <span className="opacity-40">·</span>
-            <span>{recipe.healthScore}/100</span>
+            <span>{recipe.healthScore ?? 0}/100</span>
           </div>
 
           {/* Dietary profile — NEW */}
@@ -1415,7 +1478,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
             {s > 1 && <span className="text-sm font-normal text-gray-600">for {s} servings</span>}
           </h3>
           <div className="grid sm:grid-cols-2 gap-2">
-            {recipe.ingredients.map((ing, i) => (
+            {(recipe.ingredients ?? []).map((ing, i) => (
               <motion.div key={i}
                 initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.035 }}
@@ -1456,7 +1519,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
           </div>
           {checkedIngredients.size > 0 && (
             <div className="no-export mt-3 flex items-center justify-between">
-              <span className="text-sm text-green-400">{checkedIngredients.size}/{recipe.ingredients.length} added to pan ✓</span>
+              <span className="text-sm text-green-400">{checkedIngredients.size}/{recipe.ingredients?.length ?? 0} added to pan ✓</span>
               <button onClick={() => setCheckedIngredients(new Set())}
                 className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Reset</button>
             </div>
@@ -1534,10 +1597,11 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
               <textarea
                 autoFocus
                 value={recipeNote}
-                onChange={e => setRecipeNote(e.target.value)}
-                onBlur={() => { saveNote(recipeNote); setEditingNote(false) }}
+                onChange={e => { setRecipeNote(e.target.value); saveNote(e.target.value) }}
+                onBlur={() => setEditingNote(false)}
                 placeholder="How did it turn out? Any tweaks for next time…"
                 rows={3}
+                maxLength={500}
                 className="w-full bg-transparent text-sm text-gray-300 placeholder-gray-700 outline-none resize-none"
               />
               <div className="flex justify-end mt-2">
@@ -1588,7 +1652,7 @@ export default function RecipeDisplay({ recipe, isFavourite = false, onToggleFav
             Tap ⏱ to start a countdown. A chime sounds when the step completes.
           </p>
           <motion.ol variants={stepListVariants} initial="hidden" animate="visible" className="space-y-2.5">
-            {recipe.steps.map((step, index) => {
+            {(recipe.steps ?? []).map((step, index) => {
               const timer     = stepTimers[index]
               const isDone    = timer?.done
               const isRunning = timer?.running
@@ -1740,7 +1804,7 @@ function CookingMode({ recipe, step, setStep, onClose }) {
   const totalSteps  = steps.length
   const currentStep = steps[step]
   const stepText    = getStepText(currentStep)
-  const progress    = Math.round(((step + 1) / totalSteps) * 100)
+  const progress    = totalSteps > 0 ? Math.round(((step + 1) / totalSteps) * 100) : 0
 
   const [timerSec,  setTimerSec]  = useState(null)   // null = not started
   const [running,   setRunning]   = useState(false)

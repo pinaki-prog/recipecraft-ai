@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from "framer-motion"
 import RecipeDisplay, { RecipeErrorBoundary } from "../components/RecipeDisplay"
 import { generateSmartRecipe, optimizeRecipe } from "../utils/generateSmartRecipe"
 import { normalizeInput, detectModeMismatch } from "../utils/normalizeInput"
-import MealPlanner from "../components/MealPlanner"
-import UserProfile, { calcTDEE } from "../components/UserProfile"
-import Auth from "../pages/Auth"
+import MealPlanner from "./MealPlanner"
+import UserProfile, { calcTDEE } from "./UserProfile"
+import Auth from "./Auth"
 import { useSync } from "../hooks/useSync"
 import { useFoodSearch } from "../hooks/useFoodSearch"
 
@@ -354,6 +354,7 @@ export default function Home() {
   const [optimizerBudget,  setOptimizerBudget]  = useState(100)
   const [recentIngredients,setRecentIngredients]= useState(() => readStorage("recentIngredients", []))
   const [historySearch,    setHistorySearch]    = useState("")
+  const [debouncedSearch,  setDebouncedSearch]  = useState("")
   const [voiceListening,   setVoiceListening]   = useState(false)
   const [dailyLog,         setDailyLog]         = useState(() => readStorage("dailyLog", []))
   const [showTracker,      setShowTracker]      = useState(false)
@@ -407,8 +408,21 @@ export default function Home() {
     return () => { window.removeEventListener("mousemove", move); if (document.body.contains(glow)) document.body.removeChild(glow) }
   }, [])
 
+  // Escape key closes any open overlay
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return
+      if (showAuth)    { setShowAuth(false);    return }
+      if (showProfile) { setShowProfile(false); return }
+      if (showPlanner) { setShowPlanner(false); return }
+      if (showTracker) { setShowTracker(false); return }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [showAuth, showProfile, showPlanner, showTracker])
+
   const particles = useMemo(() =>
-    [...Array(40)].map((_, i) => ({
+    [...Array(20)].map((_, i) => ({
       left: `${(i * 2.5) % 100}%`,
       top: `${(i * 3.1) % 100}%`,
       duration: 10 + (i * 0.6) % 20,
@@ -479,6 +493,18 @@ export default function Home() {
   // ── Input change handler ─────────────────────────────────────
   // Now destructures the v2 object shape from normalizeInput.
   const usdaDebounceRef = useRef(null)
+  const voiceRef        = useRef(null)   // holds active SpeechRecognition instance
+
+  // Stop mic if component unmounts while listening
+  useEffect(() => {
+    return () => { voiceRef.current?.stop() }
+  }, [])
+
+  // Debounce historySearch — only update filter 200ms after user stops typing
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(historySearch), 200)
+    return () => clearTimeout(t)
+  }, [historySearch])
   const handleInputChange = useCallback(val => {
     setRawInput(val)
     setInputError(false)
@@ -495,14 +521,18 @@ export default function Home() {
 
     // Debounced USDA search on the last typed word
     clearTimeout(usdaDebounceRef.current)
+    const capturedVal = val   // capture current value to detect stale results
     usdaDebounceRef.current = setTimeout(async () => {
-      const lastWord = val.split(",").pop().trim()
+      const lastWord = capturedVal.split(",").pop().trim()
       if (lastWord.length >= 3) {
         const results = await searchUSDA(lastWord, 5)
-        setUsdaSuggestions(results.map(r => ({
-          name:      r.name,
-          nutrients: r.nutrients,
-        })))
+        // Only update if input hasn't changed since this search was fired
+        setRawInput(current => {
+          if (current === capturedVal) {
+            setUsdaSuggestions(results.map(r => ({ name: r.name, nutrients: r.nutrients })))
+          }
+          return current
+        })
       } else {
         setUsdaSuggestions([])
       }
@@ -590,21 +620,24 @@ export default function Home() {
     }
     setLoading(true)
     setGenError(null)
-    setTimeout(() => {
+    // Use queueMicrotask so React can flush the loading state before CPU work starts
+    queueMicrotask(() => {
       try {
         const result = generateSmartRecipe(remixParams)
         if (result?.error) {
           setGenError(result.errorMessage ?? "Remix failed. Try again.")
         } else if (result) {
           setRecipe(result)
-          const updated = [result, ...readStorage("savedRecipes", [])].slice(0, 20)
+          const prevR   = readStorage("savedRecipes", [])
+          const dedupR  = prevR.filter(r => r.id !== result.id)
+          const updated = [result, ...dedupR].slice(0, 20)
           localStorage.setItem("savedRecipes", JSON.stringify(updated))
           setHistory(updated)
         }
-      } catch { setGenError("Remix failed.") }
+      } catch { setGenError("Remix failed — try a different option or generate a fresh recipe.") }
       finally { setLoading(false) }
-    }, 50)
-  }, [remixRecipe])
+    })
+  }, [remixRecipe, goal, spice, budget, location, skill, servings])
 
   // ── Mode switch ──────────────────────────────────────────────
   const switchMode = newMode => {
@@ -626,19 +659,22 @@ export default function Home() {
     rec.lang = "en-IN"
     rec.interimResults = false
     rec.maxAlternatives = 1
+    voiceRef.current = rec   // store for cleanup
     setVoiceListening(true)
     rec.start()
     rec.onresult = e => {
       const transcript = e.results[0][0].transcript
       setRawInput(prev => prev ? prev + ", " + transcript : transcript)
       setVoiceListening(false)
+      voiceRef.current = null
     }
-    rec.onerror = () => setVoiceListening(false)
-    rec.onend   = () => setVoiceListening(false)
+    rec.onerror = () => { setVoiceListening(false); voiceRef.current = null }
+    rec.onend   = () => { setVoiceListening(false); voiceRef.current = null }
   }
 
   // ── Main generate ────────────────────────────────────────────
   const runGenerate = async (useOptimizer = false) => {
+    if (loading) return   // prevent double-submit
     if (!rawInput.trim()) {
       setInputError(true)
       setTimeout(() => setInputError(false), 500)
@@ -656,31 +692,30 @@ export default function Home() {
 
     setLoading(true)
     setRecipe(null)
+    setUsdaSuggestions([])   // clear dropdown immediately
 
     // ── USDA enrichment for unknown ingredients ─────────────────
-    // Ingredients not in our DB get real nutrition from USDA
-    const nutritionOverrides = {}
-    const unknownItems = ingredients.filter(ing => {
-      // Check if item has nutrition in our DB (via normalizeInput resolved name)
+    if (USDA_KEY_AVAILABLE) {
       try {
-        const { NUTRITION_DB } = window.__smartrecipe_ndb__ ?? {}
-        return NUTRITION_DB ? !NUTRITION_DB[ing] : false
-      } catch { return false }
-    })
-
-    if (unknownItems.length > 0 && USDA_KEY_AVAILABLE) {
-      try {
-        await Promise.all(
-          unknownItems.slice(0, 5).map(async (item) => {  // max 5 parallel
-            const results = await searchUSDA(item, 1)
-            if (results[0]?.nutrients) {
-              nutritionOverrides[item] = {
-                ...results[0].nutrients,
-                typicalUseQty: 100,
+        const { NUTRITION_DB } = await import("../utils/nutritionDB.js")
+        const unknownItems = ingredients.filter(ing => !NUTRITION_DB[ing])
+        if (unknownItems.length > 0) {
+          await Promise.all(
+            unknownItems.slice(0, 5).map(async (item) => {
+              const results = await searchUSDA(item, 1)
+              if (results[0]?.nutrients) {
+                // Sanitize — clamp any negative values to 0 (bad API data)
+                const raw = results[0].nutrients
+                nutritionOverrides[item] = {
+                  ...Object.fromEntries(
+                    Object.entries(raw).map(([k, v]) => [k, Math.max(0, v ?? 0)])
+                  ),
+                  typicalUseQty: 100,
+                }
               }
-            }
-          })
-        )
+            })
+          )
+        }
       } catch { /* non-fatal — proceed without overrides */ }
     }
 
@@ -705,7 +740,7 @@ export default function Home() {
     setTimeout(() => {
       try {
         const result = useOptimizer
-          ? optimizeRecipe({ ...params, maxCostPerServing: optimizerBudget })
+          ? optimizeRecipe({ ...params, maxCostPerServing: optimizerBudget, nutritionOverrides })
           : generateSmartRecipe(params)
 
         if (result?.error) {
@@ -713,8 +748,11 @@ export default function Home() {
           setRecipe(null)
         } else {
           setRecipe(result)
+          setShowOptimizer(false)   // reset optimizer after each generate
           if (result) {
-            const updated = [result, ...readStorage("savedRecipes", [])].slice(0, 20)
+            const prev    = readStorage("savedRecipes", [])
+            const deduped = prev.filter(r => r.id !== result.id)  // remove duplicate if same recipe re-generated
+            const updated = [result, ...deduped].slice(0, 20)
             localStorage.setItem("savedRecipes", JSON.stringify(updated))
             setHistory(updated)
             syncRecipe(result)   // ← push to Supabase
@@ -738,6 +776,13 @@ export default function Home() {
     [...history].sort((a, b) =>
       (favourites.has(b.title) ? 1 : 0) - (favourites.has(a.title) ? 1 : 0)
     ), [history, favourites])
+
+  // Memoized filtered history — avoids re-filtering on every keystroke render
+  const filteredHistory = useMemo(() =>
+    sortedHistory.slice(1).filter(item =>
+      !debouncedSearch.trim() ||
+      item.title?.toLowerCase().includes(debouncedSearch.toLowerCase())
+    ), [sortedHistory, debouncedSearch])
 
   // ═══════════════════════════════════════════════════════════
   //  RENDER
@@ -799,7 +844,12 @@ export default function Home() {
               // Save today's totals to weekly trend
               const todayKey  = new Date().toDateString()
               const dayTotals = next.reduce((a,e)=>({cal:a.cal+(e.cal||0),p:a.p+(e.p||0),c:a.c+(e.c||0),f:a.f+(e.f||0)}),{cal:0,p:0,c:0,f:0})
-              const updTrend  = { ...weeklyTrend, [todayKey]: dayTotals }
+              const raw = { ...weeklyTrend, [todayKey]: dayTotals }
+              // Prune to last 8 days only — prevents unbounded growth
+              const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 8)
+              const updTrend = Object.fromEntries(
+                Object.entries(raw).filter(([k]) => new Date(k) >= cutoff)
+              )
               setWeeklyTrend(updTrend)
               localStorage.setItem("weeklyTrend", JSON.stringify(updTrend))
               syncDailyLog(next)
@@ -811,11 +861,15 @@ export default function Home() {
               localStorage.setItem("dailyLog", JSON.stringify(next))
               const todayKey  = new Date().toDateString()
               const dayTotals = next.reduce((a,e)=>({cal:a.cal+(e.cal||0),p:a.p+(e.p||0),c:a.c+(e.c||0),f:a.f+(e.f||0)}),{cal:0,p:0,c:0,f:0})
-              const updTrend  = { ...weeklyTrend, [todayKey]: dayTotals }
-              setWeeklyTrend(updTrend)
-              localStorage.setItem("weeklyTrend", JSON.stringify(updTrend))
+              const raw2 = { ...weeklyTrend, [todayKey]: dayTotals }
+              const cutoff2 = new Date(); cutoff2.setDate(cutoff2.getDate() - 8)
+              const updTrend2 = Object.fromEntries(
+                Object.entries(raw2).filter(([k]) => new Date(k) >= cutoff2)
+              )
+              setWeeklyTrend(updTrend2)
+              localStorage.setItem("weeklyTrend", JSON.stringify(updTrend2))
               syncDailyLog(next)
-              syncWeeklyTrend(updTrend)
+              syncWeeklyTrend(updTrend2)
             }}
             onClose={() => setShowTracker(false)}
             currentRecipe={recipe}
@@ -979,6 +1033,12 @@ export default function Home() {
                     ? isDark ? "border-amber-500/50 bg-amber-500/5" : "border-amber-400 bg-amber-50"
                     : isDark ? "border-white/20 text-gray-100 focus:border-orange-500/50 bg-white/5"
                              : "border-gray-300 text-gray-800 focus:border-orange-400 bg-white"}`} />
+            {/* Character counter — shows when approaching limit */}
+            {rawInput.length > 400 && (
+              <p className={`text-xs text-right mt-1 pr-1 ${rawInput.length >= 490 ? "text-red-400" : "text-gray-600"}`}>
+                {rawInput.length}/500
+              </p>
+            )}
 
             {/* ── USDA ingredient suggestions ───────────────── */}
             {usdaSuggestions.length > 0 && (
@@ -1317,9 +1377,12 @@ export default function Home() {
           )}
 
           <div className="grid md:grid-cols-2 gap-4">
-            {sortedHistory.slice(1)
-              .filter(item => !historySearch.trim() || item.title?.toLowerCase().includes(historySearch.toLowerCase()))
-              .map((item, index) => {
+            {filteredHistory.length === 0 && historySearch.trim() && (
+              <p className={`col-span-2 text-center py-8 text-sm ${isDark ? "text-gray-600" : "text-gray-400"}`}>
+                No recipes match "{historySearch}" — try a different search
+              </p>
+            )}
+            {filteredHistory.map((item, index) => {
               const isFav = favourites.has(item.title)
               const dietEmoji   = item.dietaryProfile?.emoji ?? ""
               const topTag      = item.healthTags?.[0]?.tag?.replace(/-/g, " ") ?? null

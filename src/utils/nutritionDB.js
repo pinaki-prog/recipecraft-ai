@@ -1512,7 +1512,7 @@ export const PDCAAS_INFO = {
   paneer:     { pdcaas:0.80, limitingAA:"methionine","reason":"Good quality dairy protein. A small methionine shortfall compared to liquid dairy (whey is reduced in paneer-making). Still provides all essential amino acids.", combineWith:"wheat or sesame to complete methionine" },
   miso_paste: { pdcaas:0.91, limitingAA:"methionine","reason":"Fermented soy — near-complete protein. Fermentation actually improves amino acid availability vs raw soy. Methionine is the only notable gap.",               combineWith:"rice, noodles — cover the methionine gap" },
   khoya:      { pdcaas:0.90, limitingAA:"none",      reason:"Concentrated dairy protein — similar quality to milk but higher density. Good source of casein and whey proteins.",                                              combineWith:null },
-  quinoa:     { pdcaas:0.87, limitingAA:"lysine-low",reason:"Exceptional for a grain — the only grain with near-complete protein. Contains all 9 amino acids including lysine (which almost every other grain lacks). Slight shortfall in lysine compared to animal protein.", combineWith:"legumes — complement the lysine slightly" },
+  quinoa:     { pdcaas:0.87, limitingAA:"lysine-low","reason":"Exceptional for a grain — the only grain with near-complete protein. Contains all 9 amino acids including lysine (which almost every other grain lacks). Slight shortfall in lysine compared to animal protein.", combineWith:"legumes — complement the lysine slightly" },
   gram_flour: { pdcaas:0.68, limitingAA:"methionine","reason":"Good plant protein for a flour. Lacks adequate methionine and cysteine. But high in lysine — the amino acid that wheat flour completely lacks, making them ideal pairs.", combineWith:"wheat flour or sesame to add methionine" },
   chickpeas:  { pdcaas:0.68, limitingAA:"methionine","reason":"Good plant protein — rich in lysine and arginine. Missing adequate methionine. The classic solution: combine with any grain (rice, wheat) to create a complementary complete protein.", combineWith:"rice or whole wheat — the classic dal-roti pairing works nutritionally" },
   rajma:      { pdcaas:0.68, limitingAA:"methionine","reason":"Good plant protein, excellent fibre. High in lysine, arginine, and iron. Methionine is the limiting amino acid — perfectly complemented by rice, making rajma chawal nutritionally complete.", combineWith:"rice — rajma chawal is nutritionally complete by design" },
@@ -1732,7 +1732,10 @@ export function computeNutritionTotals(ingredients, nutritionOverrides = {}) {
     const n = NUTRITION_DB[item] ?? nutritionOverrides[item]
     if (!n) return
     const qty = (n.typicalUseQty ?? 100) / 100
-    Object.keys(totals).forEach(k => { totals[k] += (n[k] ?? 0) * qty })
+    Object.keys(totals).forEach(k => {
+      const val = (n[k] ?? 0) * qty
+      totals[k] += Number.isFinite(val) ? val : 0  // guard against NaN/Infinity
+    })
   })
   return Object.fromEntries(Object.entries(totals).map(([k,v]) => [k, +v.toFixed(2)]))
 }

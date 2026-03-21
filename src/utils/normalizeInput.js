@@ -1080,10 +1080,23 @@ function splitNegation(text) {
  */
 export function normalizeInput(raw) {
   if (!raw || !raw.trim()) {
-    return { ingredients: [], excluded: [], signals: {}, unknown: [], suggestions: [], quantities: {}, unknown: [], suggestions: [] }
+    return { ingredients: [], excluded: [], signals: {}, unknown: [], suggestions: [], quantities: {} }
   }
+  // Cap input length to prevent expensive regex on huge pastes
+  // Slice at last comma or space before 500 chars to avoid cutting mid-word
+  const safeRaw = raw.length <= 500 ? raw : raw.slice(0, 500).replace(/[\w]+$/, "")
 
-  const text = raw.trim().toLowerCase().replace(/[^\w\s\-']/g, " ")
+  const text = safeRaw.trim().toLowerCase().replace(/[^\w\s\-']/g, " ")
+
+  // If the cleaned text is mostly whitespace but original had content,
+  // the user likely typed in a non-Latin script — return a helpful signal
+  if (text.trim().length < 2 && safeRaw.trim().length > 2) {
+    return {
+      ingredients: [], excluded: [], signals: {}, unknown: [],
+      suggestions: ["Please type ingredient names in English (e.g. 'chicken, rice, garlic')"],
+      quantities: {},
+    }
+  }
 
   // Step 1: Extract context signals (goal, dietary, cuisine, time)
   const signals = extractSignals(text)

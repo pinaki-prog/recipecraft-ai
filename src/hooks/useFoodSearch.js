@@ -21,6 +21,16 @@ const USDA_KEY     = import.meta.env.VITE_USDA_API_KEY
 const BASE_URL     = "https://api.nal.usda.gov/fdc/v1"
 const CACHE_PREFIX = "usda_cache_"
 
+// ── Safe timeout signal — AbortSignal.timeout() not in Safari < 16 ──
+function timeoutSignal(ms) {
+  if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms)
+  const ctrl = new AbortController()
+  setTimeout(() => ctrl.abort(), ms)
+  return ctrl.signal
+}
+
+
+
 // ── Session cache helpers ─────────────────────────────────────
 function getCache(key) {
   try { return JSON.parse(sessionStorage.getItem(CACHE_PREFIX + key)) ?? null }
@@ -108,7 +118,7 @@ export function useFoodSearch() {
         { signal: abortRef.current.signal }
       )
       if (!res.ok) throw new Error(`USDA API error: ${res.status}`)
-      const data = await res.json()
+      const data = res.json().catch(() => { throw new Error('Invalid JSON response') })
 
       const results = (data.foods ?? []).map(food => ({
         fdcId:     food.fdcId,
@@ -145,10 +155,10 @@ export function useFoodSearch() {
     try {
       const res = await fetch(
         `${BASE_URL}/food/${fdcId}?api_key=${USDA_KEY}`,
-        { signal: AbortSignal.timeout(8000) }
+        { signal: timeoutSignal(8000) }
       )
       if (!res.ok) throw new Error(`USDA lookup error: ${res.status}`)
-      const food = await res.json()
+      const food = res.json().catch(() => { throw new Error('Invalid JSON response') })
 
       const result = {
         fdcId:     food.fdcId,
@@ -215,10 +225,10 @@ export async function searchOFF(query, maxResults = 5) {
   try {
     const res = await fetch(
       `${OFF_BASE}/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=${maxResults}&fields=product_name,brands,code,nutriments,image_thumb_url,categories`,
-      { signal: AbortSignal.timeout(6000) }
+      { signal: timeoutSignal(6000) }
     )
     if (!res.ok) return []
-    const data = await res.json()
+    const data = res.json().catch(() => { throw new Error('Invalid JSON response') })
 
     const results = (data.products ?? [])
       .filter(p => p.product_name)
@@ -253,10 +263,10 @@ export async function lookupBarcode(barcode) {
   try {
     const res = await fetch(
       `${OFF_BASE}/api/v2/product/${barcode}.json`,
-      { signal: AbortSignal.timeout(6000) }
+      { signal: timeoutSignal(6000) }
     )
     if (!res.ok) return null
-    const data = await res.json()
+    const data = res.json().catch(() => { throw new Error('Invalid JSON response') })
     if (data.status !== 1) return null
 
     const p = data.product

@@ -1,0 +1,59 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#1a2235"/>
+      <stop offset="100%" stop-color="#0b0f19"/>
+    </radialGradient>
+    <radialGradient id="dot" cx="35%" cy="35%" r="65%">
+      <stop offset="0%"   stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="240" fill="url(#bg)"/>
+
+  <!-- Outer ring gradient -->
+  <circle cx="256" cy="256" r="238" fill="none" stroke="url(#ring)" stroke-width="8" opacity="0.9"/>
+  <circle cx="256" cy="256" r="228" fill="none" stroke="url(#ring)" stroke-width="3" opacity="0.4"/>
+
+  <!-- Fork (left) -->
+  <g fill="white" opacity="0.92">
+    <!-- Handle -->
+    <rect x="162" y="268" width="22" height="108" rx="11"/>
+    <!-- Tine connector -->
+    <rect x="148" y="238" width="50" height="36" rx="4"/>
+    <!-- Left tine -->
+    <rect x="150" y="132" width="14" height="112" rx="7"/>
+    <!-- Middle tine -->
+    <rect x="170" y="132" width="14" height="112" rx="7"/>
+    <!-- Right tine -->
+    <rect x="190" y="132" width="14" height="112" rx="7"/>
+  </g>
+
+  <!-- Knife (right) -->
+  <g fill="white" opacity="0.92">
+    <!-- Blade -->
+    <path d="M316 132 L348 132 L334 212 L316 212 Z" rx="4"/>
+    <!-- Handle -->
+    <rect x="316" y="220" width="22" height="156" rx="11"/>
+  </g>
+
+  <!-- Centre orange dot with glow -->
+  <circle cx="256" cy="256" r="36" fill="#f97316" opacity="0.25" filter="url(#glow)"/>
+  <circle cx="256" cy="256" r="28" fill="url(#dot)"/>
+  <circle cx="245" cy="245" r="8"  fill="white" opacity="0.35"/>
+
+  <!-- Sparkle dots -->
+  <circle cx="336" cy="148" r="10" fill="#f97316" opacity="0.85"/>
+  <circle cx="176" cy="140" r="7"  fill="#ec4899" opacity="0.70"/>
+  <circle cx="348" cy="340" r="6"  fill="#f97316" opacity="0.50"/>
+</svg>
