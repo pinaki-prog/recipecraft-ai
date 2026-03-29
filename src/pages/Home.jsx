@@ -695,6 +695,8 @@ export default function Home() {
     setUsdaSuggestions([])   // clear dropdown immediately
 
     // ── USDA enrichment for unknown ingredients ─────────────────
+    // Declared outside if block so it's always in scope for params
+    const nutritionOverrides = {}
     if (USDA_KEY_AVAILABLE) {
       try {
         const { NUTRITION_DB } = await import("../utils/nutritionDB.js")

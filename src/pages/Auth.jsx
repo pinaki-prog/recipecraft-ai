@@ -181,7 +181,7 @@ export default function Auth({ onClose, onAuth }) {
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
-                  onChange={e => { setPassword(e.target.value); clear() }}
+                  onChange={e => setPassword(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && handleSubmit()}
                   placeholder={isSignup ? "Minimum 6 characters" : "Your password"}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 pr-11
