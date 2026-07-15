@@ -81,55 +81,6 @@ Type in whatever ingredients you have — or just a dish name like `butter_chick
 
 ---
 
-## 📁 Project Structure
-
-```
-src/
-├── components/
-│   └── RecipeDisplay.jsx     # Recipe card — macros, timers, export, all sections
-├── pages/
-│   └── Home.jsx              # Main page — form, history, favourites, theme
-└── utils/
-    └── generateSmartRecipe.js # All engines — cuisine, nutrition, title, steps, budget
-```
-
-The entire recipe logic lives in `generateSmartRecipe.js`. It exports one function:
-
-```js
-generateSmartRecipe({ ingredients, goal, spice, budget, location, skill })
-```
-
-Returns a fully structured recipe object with title, description, ingredients, steps, macros, micros, allergens, swaps, mistakes, pairings and more.
-
----
-
-## 🏃 Running locally
-
-```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/recipecraft-ai.git
-cd recipecraft-ai
-
-# Install
-npm install
-
-# Run
-npm run dev
-```
-
-Open `http://localhost:5173`
-
----
-
-## 📦 Building for production
-
-```bash
-npm run build
-```
-
-Output goes to `dist/`. Deploy that folder anywhere — Vercel, Netlify, GitHub Pages.
-
----
 
 ## 🌍 Supported Cuisines
 
